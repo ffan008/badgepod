@@ -632,11 +632,11 @@ static void showRecScreen(uint32_t elapsedSec) {
 }
 
 // ---------------- Touch pages ----------------
-enum UiMode { UI_ANIM, UI_MENU, UI_FACES, UI_INFO };
+enum UiMode { UI_ANIM, UI_MENU, UI_FACES, UI_INFO, UI_CALIB };
 static UiMode g_ui = UI_ANIM;
 static uint32_t g_uiLastActMs = 0;
 static uint32_t g_infoRedrawMs = 0;
-static const uint32_t UI_TIMEOUT_MS = 6000;
+static const uint32_t UI_TIMEOUT_MS = 15000;
 
 struct Btn { int x, y, w, h; const char *label; };
 static bool inBtn(const Btn &b, int x, int y) {
@@ -661,7 +661,8 @@ static Btn faceBtn(int i) { return Btn{63, 22 + i * 62, 340, 54, ""}; }
 static const Btn kInfoBriMinus{33, 296, 120, 62, "亮度-"};
 static const Btn kInfoBriPlus{173, 296, 120, 62, "亮度+"};
 static const Btn kInfoBack{313, 296, 120, 62, "返回"};
-static const Btn kInfoReprov{33, 378, 400, 62, "重新配网"};
+static const Btn kInfoReprov{33, 378, 190, 62, "重新配网"};
+static const Btn kInfoCalib{243, 378, 190, 62, "触摸校准"};
 
 static void drawMenuPage() {
   gfx->fillScreen(gfx->color565(10, 12, 18));
@@ -669,7 +670,7 @@ static void drawMenuPage() {
   gfx->setTextColor(gfx->color565(90, 100, 120));
   gfx->setTextSize(2);
   gfx->setCursor(197, 432);
-  gfx->print("v1.2.3");
+  gfx->print("v1.2.4");
 }
 
 static void drawFacesPage() {
@@ -713,6 +714,7 @@ static void drawInfoPage() {
   drawButton(kInfoBriPlus);
   drawButton(kInfoBack);
   drawButton(kInfoReprov);
+  drawButton(kInfoCalib);
 }
 
 static void drawCurrentPage() {
@@ -734,8 +736,42 @@ static void exitToAnim() {
   g_displayed = -1;  // force clip reload (pages overwrote the frame)
 }
 
-// Tap = touch-down edge. Shared across loop paths; only one runs at a time.
-static bool pollTap(int &x, int &y) {
+static int pollButton();  // defined below; the calib page needs it
+
+// ---- Touch calibration ----
+// A unit's raw touch axes can be swapped / mirrored / scaled vs the
+// display, which makes menu taps land on the wrong button. A 4-target
+// tap calibration fits the mapping (axis swap + per-axis linear fit;
+// mirrors fall out as negative slope) and persists it in NVS.
+static bool g_calValid = false;
+static bool g_calSwap = false;
+static float g_calSx = 1, g_calOx = 0, g_calSy = 1, g_calOy = 0;
+static bool g_calSkipBoot = false;  // BOOT pressed on the calib page
+
+static void loadTouchCal() {
+  g_calValid = g_prefs.getUChar("tc_ok", 0) != 0;
+  g_calSwap = g_prefs.getUChar("tc_sw", 0) != 0;
+  g_calSx = g_prefs.getFloat("tc_sx", 1); g_calOx = g_prefs.getFloat("tc_ox", 0);
+  g_calSy = g_prefs.getFloat("tc_sy", 1); g_calOy = g_prefs.getFloat("tc_oy", 0);
+}
+static void saveTouchCal() {
+  g_prefs.putUChar("tc_ok", 1);
+  g_prefs.putUChar("tc_sw", g_calSwap ? 1 : 0);
+  g_prefs.putFloat("tc_sx", g_calSx); g_prefs.putFloat("tc_ox", g_calOx);
+  g_prefs.putFloat("tc_sy", g_calSy); g_prefs.putFloat("tc_oy", g_calOy);
+}
+static void applyTouchCal(int rx, int ry, int &dx, int &dy) {
+  if (!g_calValid) { dx = rx; dy = ry; return; }
+  int u = g_calSwap ? ry : rx, v = g_calSwap ? rx : ry;
+  dx = (int)lroundf(g_calSx * u + g_calOx);
+  dy = (int)lroundf(g_calSy * v + g_calOy);
+  dx = dx < 0 ? 0 : (dx > 465 ? 465 : dx);
+  dy = dy < 0 ? 0 : (dy > 465 ? 465 : dy);
+}
+
+// Tap = touch-down edge, raw panel coordinates. Shared across loop
+// paths; only one runs at a time.
+static bool pollTapRaw(int &x, int &y) {
   static bool wasDown = false;
   if (!g_touchOk) return false;
   xSemaphoreTake(g_wireMutex, portMAX_DELAY);
@@ -746,6 +782,114 @@ static bool pollTap(int &x, int &y) {
   if (down && !wasDown) { x = tx; y = ty; tap = true; }
   wasDown = down;
   return tap;
+}
+
+// Tap in display coordinates (calibration applied).
+static bool pollTap(int &x, int &y) {
+  int rx, ry;
+  if (!pollTapRaw(rx, ry)) return false;
+  applyTouchCal(rx, ry, x, y);
+  Serial.printf("tap raw=(%d,%d) -> (%d,%d)\n", rx, ry, x, y);
+  return true;
+}
+
+// ---- Calibration page ----
+static const int kCalTgt[4][2] = {{84, 84}, {382, 84}, {382, 382}, {84, 382}};
+static int g_calStep = 0;
+static int g_calRaw[4][2];
+
+static void drawCalibPage() {
+  uint16_t bg = gfx->color565(10, 12, 18);
+  gfx->fillScreen(bg);
+  drawCnText(233 - cnTextWidth("触摸校准") / 2, 96, "触摸校准", RGB565_WHITE, bg);
+  drawCnText(233 - cnTextWidth("点圆圈") / 2, 140, "点圆圈", RGB565_WHITE, bg);
+  for (int i = 0; i < 4; i++)
+    gfx->fillCircle(203 + i * 20, 200, 5,
+                    i < g_calStep ? gfx->color565(64, 200, 120)
+                                  : gfx->color565(70, 80, 100));
+  int cx = kCalTgt[g_calStep][0], cy = kCalTgt[g_calStep][1];
+  gfx->fillCircle(cx, cy, 17, gfx->color565(200, 60, 60));
+  gfx->drawCircle(cx, cy, 22, RGB565_WHITE);
+  gfx->drawCircle(cx, cy, 23, RGB565_WHITE);
+}
+
+static bool fitCalLine(const float *u, const float *t, float &a, float &b,
+                       float &err) {
+  float mu = 0, mt = 0;
+  for (int i = 0; i < 4; i++) { mu += u[i]; mt += t[i]; }
+  mu /= 4; mt /= 4;
+  float num = 0, den = 0;
+  for (int i = 0; i < 4; i++) {
+    num += (u[i] - mu) * (t[i] - mt);
+    den += (u[i] - mu) * (u[i] - mu);
+  }
+  if (den < 1000) return false;  // raw points barely moved: not real taps
+  a = num / den;
+  b = mt - a * mu;
+  err = 0;
+  for (int i = 0; i < 4; i++) err += fabsf(a * u[i] + b - t[i]);
+  err /= 4;
+  return true;
+}
+
+static void finishCalib() {
+  float tx[4], ty[4], ux[4], vx[4];
+  for (int i = 0; i < 4; i++) { tx[i] = kCalTgt[i][0]; ty[i] = kCalTgt[i][1]; }
+  float bestErr = 1e9, ba = 1, bb = 0, bc = 1, bd = 0;
+  bool bestSwap = false, ok = false;
+  for (int m = 0; m < 2; m++) {
+    for (int i = 0; i < 4; i++) {
+      ux[i] = m ? g_calRaw[i][1] : g_calRaw[i][0];
+      vx[i] = m ? g_calRaw[i][0] : g_calRaw[i][1];
+    }
+    float a, b, c, d, ex, ey;
+    if (!fitCalLine(ux, tx, a, b, ex)) continue;
+    if (!fitCalLine(vx, ty, c, d, ey)) continue;
+    if (ex + ey < bestErr) {
+      bestErr = ex + ey; bestSwap = (m == 1);
+      ba = a; bb = b; bc = c; bd = d; ok = true;
+    }
+  }
+  uint16_t bg = gfx->color565(10, 12, 18);
+  gfx->fillScreen(bg);
+  if (ok && bestErr < 45) {
+    g_calSwap = bestSwap; g_calSx = ba; g_calOx = bb;
+    g_calSy = bc; g_calOy = bd; g_calValid = true;
+    saveTouchCal();
+    Serial.printf("touch cal ok: swap=%d sx=%.3f ox=%.1f sy=%.3f oy=%.1f err=%.1f\n",
+                  (int)bestSwap, ba, bb, bc, bd, bestErr);
+    drawCnText(233 - cnTextWidth("完成") / 2, 219, "完成", RGB565_WHITE, bg);
+    delay(900);
+    exitToAnim();
+  } else {
+    Serial.printf("touch cal failed: ok=%d err=%.1f\n", (int)ok, bestErr);
+    drawCnText(233 - cnTextWidth("失败") / 2, 219, "失败", RGB565_WHITE, bg);
+    delay(900);
+    g_calStep = 0;
+    drawCalibPage();
+  }
+}
+
+static void enterCalib() {
+  g_calStep = 0;
+  g_ui = UI_CALIB;
+  g_uiLastActMs = millis();
+  drawCalibPage();
+}
+
+static void uiCalibLoop() {
+  // Any BOOT press skips calibration for this boot (identity mapping).
+  if (pollButton() != 0) { g_calSkipBoot = true; exitToAnim(); return; }
+  int rx, ry;
+  if (pollTapRaw(rx, ry)) {
+    g_calRaw[g_calStep][0] = rx;
+    g_calRaw[g_calStep][1] = ry;
+    g_calStep++;
+    if (g_calStep < 4) drawCalibPage();
+    else finishCalib();
+    return;
+  }
+  delay(25);
 }
 
 // ---------------- Button ----------------
@@ -933,9 +1077,12 @@ static void consumeCommand() {
   Serial.printf("face <- command %d (state %d)\n", id, g_cmdFace);
 }
 
+static uint32_t g_manualHoldUntil = 0;  // manual face pick sticks for a while
+
 static int desiredFace() {
   uint32_t now = millis();
   if (g_cmdFace >= 0 && (int32_t)(g_cmdUntil - now) > 0) return g_cmdFace;
+  if ((int32_t)(g_manualHoldUntil - now) > 0) return g_state;
   if ((int32_t)(g_burstUntil - now) > 0) return FACE_CELEB;
   SrStatus &s = srStatus();
   if (s.running && s.lastSpeechMs != 0 &&
@@ -947,29 +1094,48 @@ static int desiredFace() {
 // ---------------- Touch page handling ----------------
 static void handlePageTap(int tx, int ty) {
   if (g_ui == UI_MENU) {
-    if (inBtn(kMenuBtns[0], tx, ty)) { exitToAnim(); startRecording(); return; }
-    if (inBtn(kMenuBtns[1], tx, ty)) { enterPage(UI_FACES); return; }
-    if (inBtn(kMenuBtns[2], tx, ty)) { enterPage(UI_INFO); return; }
-    if (inBtn(kMenuBtns[3], tx, ty)) { exitToAnim(); return; }
+    if (inBtn(kMenuBtns[0], tx, ty)) { drawButton(kMenuBtns[0], true); delay(150); exitToAnim(); startRecording(); return; }
+    if (inBtn(kMenuBtns[1], tx, ty)) { drawButton(kMenuBtns[1], true); delay(150); enterPage(UI_FACES); return; }
+    if (inBtn(kMenuBtns[2], tx, ty)) { drawButton(kMenuBtns[2], true); delay(150); enterPage(UI_INFO); return; }
+    if (inBtn(kMenuBtns[3], tx, ty)) { drawButton(kMenuBtns[3], true); delay(150); exitToAnim(); return; }
   } else if (g_ui == UI_FACES) {
     for (int i = 0; i < kNumStates; i++) {
       if (inBtn(faceBtn(i), tx, ty)) {
+        Btn b = faceBtn(i);
+        b.label = kStates[i].cn;
+        drawButton(b, true);
+        delay(150);
         g_state = i;
         g_cmdUntil = 0;  // manual choice wins over a command hold
+        g_manualHoldUntil = millis() + 20000;  // and over VAD/burst for 20 s
         exitToAnim();
         return;
       }
     }
-    if (inBtn(faceBtn(6), tx, ty)) { enterPage(UI_MENU); return; }
+    if (inBtn(faceBtn(6), tx, ty)) {
+      Btn b = faceBtn(6);
+      b.label = "返回";
+      drawButton(b, true);
+      delay(150);
+      enterPage(UI_MENU);
+      return;
+    }
   } else if (g_ui == UI_INFO) {
     if (inBtn(kInfoBriMinus, tx, ty)) {
+      drawButton(kInfoBriMinus, true); delay(150);
       g_brightness = g_brightness > 70 ? g_brightness - 40 : 30;
       gfx->setBrightness(g_brightness);
     } else if (inBtn(kInfoBriPlus, tx, ty)) {
+      drawButton(kInfoBriPlus, true); delay(150);
       g_brightness = g_brightness < 215 ? g_brightness + 40 : 255;
       gfx->setBrightness(g_brightness);
     } else if (inBtn(kInfoBack, tx, ty)) {
+      drawButton(kInfoBack, true); delay(150);
       enterPage(UI_MENU);
+      return;
+    } else if (inBtn(kInfoCalib, tx, ty)) {
+      drawButton(kInfoCalib, true); delay(150);
+      enterCalib();
       return;
     } else if (inBtn(kInfoReprov, tx, ty)) {
       // Re-provision: wipe credentials and reboot into the setup AP.
@@ -1089,6 +1255,7 @@ void setup() {
   }
 
   wifiSetup();
+  loadTouchCal();
 
   // First frame out NOW (v1.2.1 display-first): the setup screen in AP
   // mode, otherwise the idle animation + splash. Everything below this
@@ -1160,6 +1327,7 @@ static void animLoop() {
     if (act == 1) {
       g_state = (g_state + 1) % kNumStates;
       g_cmdUntil = 0;  // manual switch wins over a command hold
+      g_manualHoldUntil = millis() + 20000;  // and over VAD/burst for 20 s
       if (loadClip(kStates[g_state].file)) g_displayed = g_state;
       showSplash(kStates[g_state].label);
       return;
@@ -1189,6 +1357,11 @@ void loop() {
     return;
   }
 
+  if (g_ui == UI_CALIB) { uiCalibLoop(); return; }
+  if (g_touchOk && !g_calValid && !g_calSkipBoot && g_ui == UI_ANIM) {
+    enterCalib();
+    return;
+  }
   if (g_ui != UI_ANIM) { uiPageLoop(); return; }
   animLoop();
 }
