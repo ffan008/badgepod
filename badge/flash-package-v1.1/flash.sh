@@ -11,9 +11,15 @@ if [ -z "$PORT" ]; then
 fi
 echo "找到开发板：$PORT"
 
+# 找一个带 esptool 的 python：优先系统 python，其次本地 venv（Homebrew 的 python 不让直接装包，PEP 668）
+PY="python3"
 if ! python3 -m esptool version >/dev/null 2>&1; then
-  echo "首次使用，安装 esptool..."
-  python3 -m pip install --user esptool
+  if [ ! -x .venv/bin/python ]; then
+    echo "首次使用，创建本地虚拟环境并安装 esptool..."
+    python3 -m venv .venv
+    .venv/bin/pip install -q esptool
+  fi
+  PY=".venv/bin/python"
 fi
 
 if [ ! -f littlefs.bin ]; then
@@ -21,7 +27,7 @@ if [ ! -f littlefs.bin ]; then
   gunzip -k littlefs.bin.gz
 fi
 
-python3 -m esptool --chip esp32s3 --port "$PORT" --baud 921600 write_flash \
+"$PY" -m esptool --chip esp32s3 --port "$PORT" --baud 921600 write_flash \
   0x0 bootloader.bin \
   0x8000 partitions.bin \
   0xe000 boot_app0.bin \
