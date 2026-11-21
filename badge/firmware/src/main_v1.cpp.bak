@@ -1,0 +1,305 @@
+// Muse badge firmware v1 — Waveshare ESP32-S3-Touch-AMOLED-1.75C
+//
+// Features:
+//  - Loops the allwise mascot state animations (MJPEG .avi on LittleFS,
+//    decoded with JPEGDEC into the CO5300 466x466 AMOLED via Arduino_GFX)
+//  - BOOT button short press: next avatar state
+//  - BOOT button long press (>=1.2s): start/stop recording
+//    (ES7210 dual mic -> 16kHz/16bit stereo WAV on LittleFS, max 120s)
+//  - Battery percent from AXP2101 shown on state splash / REC screen
+//
+// Pin map (board_config from Waveshare examples):
+//  LCD QSPI: CS12 SCLK38 SDIO 4/5/6/7, RST1 | I2C: SDA15 SCL14
+//  ES7210: BCLK9 LRCK45 DIN10 MCLK16 | BOOT button: GPIO0
+#include <Arduino.h>
+#include <Wire.h>
+#include <LittleFS.h>
+#include <driver/i2s.h>
+#include <Arduino_GFX_Library.h>
+#include <JPEGDEC.h>
+#include <XPowersLib.h>
+#include "es7210_min.h"
+
+// ---------------- Pins ----------------
+static const int LCD_CS = 12, LCD_SCLK = 38, LCD_RST = 1;
+static const int LCD_D0 = 4, LCD_D1 = 5, LCD_D2 = 6, LCD_D3 = 7;
+static const int IIC_SDA = 15, IIC_SCL = 14;
+static const int PIN_BCLK = 9, PIN_LRCK = 45, PIN_DIN = 10, PIN_MCLK = 16;
+static const int PIN_BOOT = 0;
+
+// ---------------- Avatar states ----------------
+struct StateDef { const char *file; const char *label; };
+static const StateDef kStates[] = {
+  {"/idle.avi",           "IDLE"},
+  {"/working.avi",        "WORKING"},
+  {"/making.avi",         "MAKING"},
+  {"/connecting.avi",     "CONNECTING"},
+  {"/celebration.avi",    "CELEBRATE"},
+  {"/waiting-helper.avi", "WAITING"},
+};
+static const int kNumStates = sizeof(kStates) / sizeof(kStates[0]);
+static int g_state = 0;
+
+// ---------------- Globals ----------------
+Arduino_DataBus *bus = new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3);
+Arduino_CO5300 *gfx = new Arduino_CO5300(bus, LCD_RST, 0, 466, 466, 6, 0, 0, 0);
+JPEGDEC jpeg;
+XPowersAXP2101 pmu;
+ES7210 codec;
+bool g_pmuOk = false;
+
+// Loaded clip in PSRAM
+static uint8_t *g_clip = nullptr;
+static size_t g_clipLen = 0;
+static uint32_t g_frameOff[512];
+static uint32_t g_frameSize[512];
+static int g_frameCount = 0;
+
+// Recording
+static const uint32_t REC_SAMPLE_RATE = 16000;
+static const uint32_t REC_MAX_SEC = 120;
+static bool g_recording = false;
+static File g_recFile;
+static uint32_t g_recBytes = 0;
+static uint32_t g_recStartMs = 0;
+static char g_recName[32] = "";
+
+// ---------------- JPEG draw callback ----------------
+static int jpegDraw(JPEGDRAW *pDraw) {
+  gfx->draw16bitRGBBitmap(pDraw->x, pDraw->y, pDraw->pPixels, pDraw->iWidth, pDraw->iHeight);
+  return 1;
+}
+
+// ---------------- AVI (MJPEG) parsing ----------------
+static uint32_t rd32(const uint8_t *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static bool loadClip(const char *path) {
+  File f = LittleFS.open(path, "r");
+  if (!f) { Serial.printf("open %s failed\n", path); return false; }
+  size_t len = f.size();
+  uint8_t *buf = (uint8_t *)ps_malloc(len);
+  if (!buf) { Serial.println("ps_malloc failed"); f.close(); return false; }
+  f.read(buf, len);
+  f.close();
+  if (memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "AVI ", 4) != 0) {
+    Serial.println("not an AVI"); free(buf); return false;
+  }
+  // Walk top-level chunks to find the 'movi' LIST
+  size_t moviStart = 0, moviEnd = 0;
+  for (size_t p = 12; p + 8 <= len;) {
+    uint32_t sz = rd32(buf + p + 4);
+    if (memcmp(buf + p, "LIST", 4) == 0 && memcmp(buf + p + 8, "movi", 4) == 0) {
+      moviStart = p + 12;
+      moviEnd = p + 8 + sz;
+      if (moviEnd > len) moviEnd = len;
+      break;
+    }
+    p += 8 + sz + (sz & 1);
+  }
+  if (!moviStart) { Serial.println("no movi list"); free(buf); return false; }
+  int n = 0;
+  for (size_t p = moviStart; p + 8 <= moviEnd && n < 512;) {
+    uint32_t sz = rd32(buf + p + 4);
+    const uint8_t *id = buf + p;
+    if ((id[3] == 'c' || id[3] == 'b') && id[2] == 'd' && sz > 4 &&
+        buf[p + 8] == 0xFF && buf[p + 9] == 0xD8) {
+      g_frameOff[n] = p + 8;
+      g_frameSize[n] = sz;
+      n++;
+    }
+    if (memcmp(id, "LIST", 4) == 0) { p += 12; continue; }
+    p += 8 + sz + (sz & 1);
+  }
+  if (g_clip) free(g_clip);
+  g_clip = buf; g_clipLen = len; g_frameCount = n;
+  Serial.printf("clip %s: %d frames, %u bytes\n", path, n, (unsigned)len);
+  return n > 0;
+}
+
+// ---------------- UI helpers ----------------
+static int batteryPct() {
+  if (!g_pmuOk || !pmu.isBatteryConnect()) return -1;
+  return pmu.getBatteryPercent();
+}
+
+static void showSplash(const char *label) {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setTextSize(4);
+  gfx->setCursor(120, 200);
+  gfx->print(label);
+  int b = batteryPct();
+  if (b >= 0) {
+    gfx->setTextSize(3);
+    gfx->setTextColor(RGB565_WHITE);
+    gfx->setCursor(170, 280);
+    gfx->printf("BAT %d%%", b);
+  }
+  delay(700);
+}
+
+static void showRecScreen(uint32_t elapsedSec) {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(233, 170, 46, RGB565_RED);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setTextSize(5);
+  gfx->setCursor(150, 260);
+  gfx->printf("%lus", (unsigned long)elapsedSec);
+  gfx->setTextSize(3);
+  gfx->setCursor(120, 330);
+  gfx->print("REC - hold BOOT to stop");
+}
+
+// ---------------- Button ----------------
+// Returns: 0 none, 1 short press, 2 long press (fires once while held)
+static int pollButton() {
+  static bool wasDown = false;
+  static uint32_t downAt = 0;
+  static bool longFired = false;
+  bool down = (digitalRead(PIN_BOOT) == LOW);
+  uint32_t now = millis();
+  if (down && !wasDown) { downAt = now; longFired = false; }
+  if (down && !longFired && now - downAt >= 1200) { longFired = true; wasDown = down; return 2; }
+  if (!down && wasDown && !longFired) { wasDown = down; return 1; }
+  wasDown = down;
+  return 0;
+}
+
+// ---------------- WAV ----------------
+static void wavHeader(uint8_t *h, uint32_t dataLen) {
+  uint32_t byteRate = REC_SAMPLE_RATE * 2 * 2;
+  memcpy(h, "RIFF", 4); memcpy(h + 8, "WAVEfmt ", 8);
+  *(uint32_t *)(h + 4) = 36 + dataLen;
+  *(uint32_t *)(h + 16) = 16;         // fmt chunk size
+  *(uint16_t *)(h + 20) = 1;          // PCM
+  *(uint16_t *)(h + 22) = 2;          // stereo
+  *(uint32_t *)(h + 24) = REC_SAMPLE_RATE;
+  *(uint32_t *)(h + 28) = byteRate;
+  *(uint16_t *)(h + 32) = 4;          // block align
+  *(uint16_t *)(h + 34) = 16;         // bits
+  memcpy(h + 36, "data", 4);
+  *(uint32_t *)(h + 40) = dataLen;
+}
+
+static void startRecording() {
+  int idx = 0;
+  do { snprintf(g_recName, sizeof(g_recName), "/rec_%03d.wav", idx++); }
+  while (LittleFS.exists(g_recName) && idx < 1000);
+  g_recFile = LittleFS.open(g_recName, "w");
+  if (!g_recFile) { Serial.println("rec open failed"); return; }
+  uint8_t h[44] = {0};
+  wavHeader(h, 0);
+  g_recFile.write(h, 44);
+  g_recBytes = 0;
+  codec.start();
+  i2s_start(I2S_NUM_1);
+  g_recording = true;
+  g_recStartMs = millis();
+  showRecScreen(0);
+  Serial.printf("REC start %s\n", g_recName);
+}
+
+static void stopRecording() {
+  i2s_stop(I2S_NUM_1);
+  codec.stop();
+  uint8_t h[44];
+  wavHeader(h, g_recBytes);
+  g_recFile.seek(0);
+  g_recFile.write(h, 44);
+  g_recFile.close();
+  g_recording = false;
+  Serial.printf("REC stop %s (%u bytes)\n", g_recName, (unsigned)g_recBytes);
+  showSplash(kStates[g_state].label);
+}
+
+static void recordLoop() {
+  static int16_t buf[2048];  // 1024 stereo frames
+  size_t read = 0;
+  i2s_read(I2S_NUM_1, buf, sizeof(buf), &read, portMAX_DELAY);
+  if (read) { g_recFile.write((uint8_t *)buf, read); g_recBytes += read; }
+  uint32_t elapsed = (millis() - g_recStartMs) / 1000;
+  static uint32_t lastShown = 0xFFFFFFFF;
+  if (elapsed != lastShown) { lastShown = elapsed; showRecScreen(elapsed); }
+  if (elapsed >= REC_MAX_SEC) { stopRecording(); return; }
+  if (pollButton() == 2) stopRecording();
+}
+
+// ---------------- Setup ----------------
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  Serial.println("Muse badge v1");
+  Wire.begin(IIC_SDA, IIC_SCL);
+  pinMode(PIN_BOOT, INPUT_PULLUP);
+
+  g_pmuOk = pmu.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
+  Serial.printf("PMU %s\n", g_pmuOk ? "ok" : "not found");
+
+  if (!gfx->begin()) Serial.println("gfx begin failed");
+  gfx->setBrightness(200);
+  gfx->fillScreen(RGB565_BLACK);
+
+  if (!LittleFS.begin(false, "/littlefs", 10, "storage")) {
+    gfx->setTextColor(RGB565_RED); gfx->setTextSize(3);
+    gfx->setCursor(60, 220); gfx->print("LittleFS mount failed");
+    Serial.println("LittleFS mount failed (upload fs image first)");
+  }
+
+  if (!codec.begin(Wire)) Serial.println("ES7210 not found");
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
+  cfg.sample_rate = REC_SAMPLE_RATE;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+  cfg.dma_buf_count = 8;
+  cfg.dma_buf_len = 256;
+  cfg.use_apll = false;
+  cfg.tx_desc_auto_clear = false;
+  cfg.fixed_mclk = 0;
+  cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
+  cfg.bits_per_chan = I2S_BITS_PER_CHAN_16BIT;
+  i2s_pin_config_t pins = {};
+  pins.bck_io_num = PIN_BCLK;
+  pins.ws_io_num = PIN_LRCK;
+  pins.data_out_num = I2S_PIN_NO_CHANGE;
+  pins.data_in_num = PIN_DIN;
+  pins.mck_io_num = PIN_MCLK;
+  i2s_driver_install(I2S_NUM_1, &cfg, 0, NULL);
+  i2s_set_pin(I2S_NUM_1, &pins);
+  i2s_stop(I2S_NUM_1);
+
+  jpeg.setPixelType(RGB565_BIG_ENDIAN);
+  loadClip(kStates[g_state].file);
+  showSplash(kStates[g_state].label);
+}
+
+// ---------------- Loop ----------------
+void loop() {
+  if (g_recording) { recordLoop(); return; }
+
+  if (g_frameCount == 0) { delay(200); return; }
+  const uint32_t frameMs = 83;  // 12 fps
+  for (int i = 0; i < g_frameCount; i++) {
+    uint32_t t0 = millis();
+    if (jpeg.openRAM(g_clip + g_frameOff[i], g_frameSize[i], jpegDraw)) {
+      jpeg.decode(0, 0, 0);
+      jpeg.close();
+    }
+    int act = pollButton();
+    if (act == 1) {
+      g_state = (g_state + 1) % kNumStates;
+      loadClip(kStates[g_state].file);
+      showSplash(kStates[g_state].label);
+      return;
+    } else if (act == 2) {
+      startRecording();
+      return;
+    }
+    uint32_t dt = millis() - t0;
+    if (dt < frameMs) delay(frameMs - dt);
+  }
+}

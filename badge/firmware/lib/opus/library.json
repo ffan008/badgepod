@@ -1,0 +1,1 @@
+{"build":{"flags":["-DHAVE_CONFIG_H","-DOPUS_BUILD","-Icelt","-Isilk","-Isilk/float","-Isrc"],"srcDir":".","srcFilter":["+<src/*.c>","+<celt/*.c>","+<silk/*.c>","+<silk/float/*.c>"]},"description":"Opus audio codec (vendored, generic float build for ESP32-S3)","frameworks":"arduino","name":"opus","platforms":"espressif32","version":"1.4.0"}
