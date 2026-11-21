@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 「做成视频」用的主播：用户自己上传的人像照片，存在用户自己的 Renoise 账号里，豆仓只记素材编号和一张缩略图。
+/// 「做成视频」用的主播：用户自己上传的人像照片，存在用户自己的 Renoise 账号里，吧唧录音库只记素材编号和一张缩略图。
 /// 另外内置两位示例主播（AI 生成的虚构人物，图片在 App 包里），第一次用来做视频时才传到用户自己的 Renoise 账号。
 struct Host: Codable, Identifiable, Hashable {
     var id: String { sample.map { "sample-\($0)" } ?? material }
@@ -34,7 +34,7 @@ final class HostLibrary {
 
     static var root: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("BeanPod/Hosts", isDirectory: true)
+        return base.appendingPathComponent("BadgePod/Hosts", isDirectory: true)
     }
     private static var index: URL { root.appendingPathComponent("hosts.json") }
     static func thumb(_ material: String) -> URL { root.appendingPathComponent("\(material).jpg") }
@@ -162,7 +162,7 @@ final class HostLibrary {
         save()
     }
 
-    /// 只从豆仓里去掉；Renoise 账号里的素材不动。
+    /// 只从吧唧录音库里去掉；Renoise 账号里的素材不动。
     func remove(_ host: Host) {
         hosts.removeAll { $0.id == host.id }
         if !host.isSample { try? FileManager.default.removeItem(at: Self.thumb(host.material)) }
@@ -271,16 +271,16 @@ struct HostCard: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .contextMenu { Button("改名…", action: onRename); Button("从豆仓移除", role: .destructive, action: onRemove) }
+        .contextMenu { Button("改名…", action: onRename); Button("从吧唧录音库移除", role: .destructive, action: onRemove) }
         .accessibilityLabel("主播 \(host.name)，\(host.ratio)\(host.isSample ? String(localized: "，示例") : "")\(picked ? String(localized: "，已选中") : "")")
         .accessibilityAction(named: "改名", onRename)
-        .accessibilityAction(named: "从豆仓移除", onRemove)
+        .accessibilityAction(named: "从吧唧录音库移除", onRemove)
     }
 
     private var menu: some View {
         Menu {
             Button("改名…", action: onRename)
-            Button("从豆仓移除", role: .destructive, action: onRemove)
+            Button("从吧唧录音库移除", role: .destructive, action: onRemove)
         } label: {
             Image(systemName: "ellipsis").font(.system(size: 12, weight: .bold)).frame(width: 26, height: 20)
                 .background(.regularMaterial, in: .capsule)

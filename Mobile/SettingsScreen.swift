@@ -101,7 +101,7 @@ struct SettingsScreen: View {
                     LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
                     LabeledContent("这台手机上的录音", value: "\(store.recordings.filter(\.downloaded).count) 条")
                 } footer: {
-                    Text("手机和 Mac 上的豆仓现在各存各的，还不会互相同步。")
+                    Text("手机和 Mac 上的吧唧录音库现在各存各的，还不会互相同步。")
                 }
             }
             .navigationTitle("设置")

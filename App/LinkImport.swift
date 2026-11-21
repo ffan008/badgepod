@@ -4,11 +4,11 @@ import Network
 import SwiftUI
 import WebKit
 
-/// 从链接导入：贴一条别人的视频链接，豆仓把声音下下来，转成文字、整理，和自己的录音放在一起。
+/// 从链接导入：贴一条别人的视频链接，吧唧录音库把声音下下来，转成文字、整理，和自己的录音放在一起。
 ///
-/// 下载交给 yt-dlp（这台 Mac 上要装着它和 ffmpeg），豆仓不自己去解各个平台的接口——那些接口三天两头变。
+/// 下载交给 yt-dlp（这台 Mac 上要装着它和 ffmpeg），吧唧录音库不自己去解各个平台的接口——那些接口三天两头变。
 /// 只下声音，不存视频：要的是文字稿，不是原片。平台自带人工字幕的（多见于 YouTube）直接用字幕，不再转写一遍。
-/// 要登录才能看的：弹一个登录窗口，用户自己在里面登录（扫码或输入，豆仓不经手密码），
+/// 要登录才能看的：弹一个登录窗口，用户自己在里面登录（扫码或输入，吧唧录音库不经手密码），
 /// 登录状态只存在这台 Mac 上，以后下载这个平台时带上。不读浏览器里的登录状态。
 extension BeanStore {
     /// keepVideo：导入窗口里单独勾过「保留画面」的链接（没勾过的按设置）。
@@ -82,7 +82,7 @@ extension BeanStore {
                 if let k = self?.linkJobs.firstIndex(where: { $0.id == id }) { self?.linkJobs[k].progress = percent / 100 }
             }
         }
-        // 在豆仓里登录过这个平台：带上登录状态
+        // 在吧唧录音库里登录过这个平台：带上登录状态
         let cookies = Self.cookieFile(platform)
         let login = FileManager.default.fileExists(atPath: cookies.path) ? ["--cookies", cookies.path] : []
         // 换着网络路线最多试三次：开着代理软件的机器上，网络时好时坏，
@@ -110,7 +110,7 @@ extension BeanStore {
             } else if Self.needsLogin(result.errors), !login.isEmpty {
                 // 已经登录过还是被拦：再弹登录窗口只会原地打转
                 problem = Problem(title: String(localized: "这条\(platform)链接没能导入"),
-                                  detail: String(localized: "已经带着你在豆仓里的\(platform)登录状态试过了，还是被拦下。可能是登录过期了（去设置的「连接」里清掉重新登录），也可能是\(platform)改了接口。"))
+                                  detail: String(localized: "已经带着你在吧唧录音库里的\(platform)登录状态试过了，还是被拦下。可能是登录过期了（去设置的「连接」里清掉重新登录），也可能是\(platform)改了接口。"))
             } else {
                 problem = Problem(title: String(localized: "这条\(platform)链接没能导入"), detail: Self.explain(result.errors, platform: platform))
             }
@@ -149,7 +149,7 @@ extension BeanStore {
         let before = Set(recordings.map(\.id))
         importFile(audio, consume: true, processNow: false)
         guard let k = recordings.firstIndex(where: { !before.contains($0.id) }) else {
-            problem = Problem(title: String(localized: "这条\(platform)链接没能导入"), detail: String(localized: "声音下下来了，但豆仓读不出这个音频文件。"))
+            problem = Problem(title: String(localized: "这条\(platform)链接没能导入"), detail: String(localized: "声音下下来了，但吧唧录音库读不出这个音频文件。"))
             return
         }
         let rid = recordings[k].id
@@ -207,7 +207,7 @@ extension BeanStore {
         let e = errors.lowercased()
         if e.contains("unsupported url") { return String(localized: "认不出这是哪个平台的视频链接。确认贴的是某一条作品的链接，不是主页或搜索页。") }
         if needsLogin(errors) {
-            return String(localized: "\(platform)要登录之后才给看这条内容。可以用别的工具把它下载成文件，再拖进豆仓的窗口。")
+            return String(localized: "\(platform)要登录之后才给看这条内容。可以用别的工具把它下载成文件，再拖进吧唧录音库的窗口。")
         }
         if e.contains("private") { return String(localized: "这条内容是私密的，不能导入。") }
         if looksLikeRegionBlock(errors) {
@@ -427,7 +427,7 @@ extension BeanStore {
     /// 每个平台的登录状态存一个文件，只在这台 Mac 上，只有自己能读。
     nonisolated static func cookieFile(_ platform: String) -> URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeanPod/Logins", isDirectory: true)
+            .appendingPathComponent("BadgePod/Logins", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let safe = platform.replacingOccurrences(of: " ", with: "")
         return dir.appendingPathComponent("\(safe).cookies.txt")
@@ -488,7 +488,7 @@ extension BeanStore {
         guard !mine.isEmpty else { return 0 }
         // 元宝没扫码时也会种几条访客 cookie，要看到登录票据才算登好了
         if platform == "视频号", !mine.contains(where: { $0.name == "hy_token" && !$0.value.isEmpty }) { return 0 }
-        var lines = ["# Netscape HTTP Cookie File", "# 豆仓的登录窗口导出，只用于下载你自己能看的内容"]
+        var lines = ["# Netscape HTTP Cookie File", "# 吧唧录音库的登录窗口导出，只用于下载你自己能看的内容"]
         for c in mine {
             let domain = c.domain.hasPrefix(".") ? c.domain : "." + c.domain
             let expiry = Int(c.expiresDate?.timeIntervalSince1970 ?? Date.now.addingTimeInterval(86400 * 30).timeIntervalSince1970)
@@ -502,8 +502,8 @@ extension BeanStore {
     }
 }
 
-/// 登录窗口：豆仓里开一个小浏览器，打开平台的登录页，用户自己扫码或输入登录。
-/// 豆仓不碰账号密码，只在用户点「登录好了」之后把这个窗口里的登录状态存下来。
+/// 登录窗口：吧唧录音库里开一个小浏览器，打开平台的登录页，用户自己扫码或输入登录。
+/// 吧唧录音库不碰账号密码，只在用户点「登录好了」之后把这个窗口里的登录状态存下来。
 struct LinkLoginSheet: View {
     @Environment(BeanStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -511,12 +511,12 @@ struct LinkLoginSheet: View {
     @State private var saving = false
     @State private var note: String?
 
-    private var then: String { request.continueImport ? String(localized: "，豆仓会接着导入") : String(localized: "回到导入") }
+    private var then: String { request.continueImport ? String(localized: "，吧唧录音库会接着导入") : String(localized: "回到导入") }
     private var onItsPage: Bool { BeanStore.loginURL(platform: request.platform, link: request.url).absoluteString == request.url }
     /// 登录窗口顶上的说明
     private var intro: String {
         if request.platform == "视频号" {
-            return String(localized: "\(request.hint)视频号网页版不给下载地址，豆仓借腾讯元宝的视频号解析拿视频。在下面点「登录」用微信扫码，登好了点右边的按钮\(then)。只要登一次。")
+            return String(localized: "\(request.hint)视频号网页版不给下载地址，吧唧录音库借腾讯元宝的视频号解析拿视频。在下面点「登录」用微信扫码，登好了点右边的按钮\(then)。只要登一次。")
         }
         if onItsPage {
             let kind = request.platform == "小红书" ? String(localized: "笔记") : String(localized: "作品")
@@ -708,7 +708,7 @@ private final class DouyinPage: NSObject, WKScriptMessageHandler, WKNavigationDe
     private var window: NSWindow?
     private var detail: [String: Any]?
 
-    /// 在页面自己的脚本之前装好：作品详情接口一回来，就把原文递给豆仓。
+    /// 在页面自己的脚本之前装好：作品详情接口一回来，就把原文递给吧唧录音库。
     private static let hook = """
     (function(){
       if (window.__bpHooked) return; window.__bpHooked = true;

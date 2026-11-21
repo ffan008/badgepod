@@ -12,7 +12,7 @@ actor QwenASR {
 
     nonisolated static var modelFolder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeanPod/Models/qwen3-asr-0.6b", isDirectory: true)
+            .appendingPathComponent("BadgePod/Models/qwen3-asr-0.6b", isDirectory: true)
     }
 
     nonisolated static func locateServer(custom: String) -> URL? {
@@ -44,7 +44,7 @@ actor QwenASR {
 
         port = Int.random(in: 39000...39900)
         let p = Process()
-        // 用一层 sh 盯着豆仓的进程：豆仓退出（哪怕是崩溃），转写服务也跟着退，不留孤儿进程
+        // 用一层 sh 盯着吧唧录音库的进程：吧唧录音库退出（哪怕是崩溃），转写服务也跟着退，不留孤儿进程
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = ["-c", #"parent=$1; shift; "$@" & child=$!; while kill -0 "$parent" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 1; done; kill "$child" 2>/dev/null"#,
                        "beanpod-asr", String(ProcessInfo.processInfo.processIdentifier), server.path,

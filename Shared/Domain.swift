@@ -477,7 +477,7 @@ nonisolated struct Recording: Identifiable, Equatable, Codable {
         return rest.isEmpty ? nil : rest
     }
     var textOnly = false
-    /// 重点标记：录音时在录音豆上按过标记键、或在豆仓里点过「标重点」的时刻（秒）。
+    /// 重点标记：录音时在录音豆上按过标记键、或在吧唧录音库里点过「标重点」的时刻（秒）。
     var marks: [TimeInterval] = []
     var videos: [VideoClip] = []
 

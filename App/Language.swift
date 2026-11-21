@@ -2,7 +2,7 @@ import Foundation
 
 /// 界面语言（设置 → 通用 → 语言）。界面文字都在 App/Localizable.xcstrings 里：中文是开发语言（也是默认），
 /// 英文是翻译；以后加别的语言，只要在那个文件里补一列翻译、在这里加一项。
-/// 切换写进这个 App 自己的 AppleLanguages，重新打开豆仓后生效。
+/// 切换写进这个 App 自己的 AppleLanguages，重新打开吧唧录音库后生效。
 enum AppLanguage: String, CaseIterable, Identifiable {
     case system, zhHans = "zh-Hans", en
 
@@ -51,7 +51,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 import AppKit
 import SwiftUI
 
-/// 设置 → 通用里的「语言」：跟随系统 / 简体中文 / English。改了以后提示重新打开豆仓。
+/// 设置 → 通用里的「语言」：跟随系统 / 简体中文 / English。改了以后提示重新打开吧唧录音库。
 struct LanguageSetting: View {
     @State private var choice = AppLanguage.current
     @State private var changed = false
@@ -60,7 +60,7 @@ struct LanguageSetting: View {
         SettingsGroup(String(localized: "语言 · Language"),
                       footer: String(localized: "界面文字跟着这里变。")) {
             SettingRow(icon: "globe", title: String(localized: "界面语言"),
-                       detail: changed ? String(localized: "重新打开豆仓后生效。") : String(localized: "默认跟随系统；系统不是中文时显示英文。")) {
+                       detail: changed ? String(localized: "重新打开吧唧录音库后生效。") : String(localized: "默认跟随系统；系统不是中文时显示英文。")) {
                 HStack(spacing: 8) {
                     Picker("界面语言", selection: $choice) {
                         ForEach(AppLanguage.allCases) { Text($0.name).tag($0) }

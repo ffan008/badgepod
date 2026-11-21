@@ -176,7 +176,7 @@ public struct GetSeedFile: Sendable, Equatable, Identifiable {
         return Double(size) / 4500
     }
 
-    /// 在豆仓录音库里的编号：开始时刻的秒数（录音豆也是这么编的），拿不到时间就用文件名算一个。
+    /// 在吧唧录音库录音库里的编号：开始时刻的秒数（录音豆也是这么编的），拿不到时间就用文件名算一个。
     public var recordingID: UInt32 {
         if let t = start ?? end { return UInt32(max(0, min(Double(UInt32.max), t.timeIntervalSince1970))) }
         return GetSeed.crc32(Array(name.utf8)) | 0x8000_0000

@@ -84,7 +84,7 @@ extension BeanStore {
         }
     }
 
-    /// 豆仓现在是不是在前台。
+    /// 吧唧录音库现在是不是在前台。
     static var appIsActive: Bool {
         #if os(macOS)
         NSApp.isActive
@@ -93,8 +93,8 @@ extension BeanStore {
         #endif
     }
 
-    /// 一条录音整理好了。豆仓不在前台时发一条系统通知，点一下就打开那条录音。
-    /// 窗口顶上滑出一句；豆仓不在最前面时（比如窗口关着、在用别的软件），同时发一条系统通知，免得错过。
+    /// 一条录音整理好了。吧唧录音库不在前台时发一条系统通知，点一下就打开那条录音。
+    /// 窗口顶上滑出一句；吧唧录音库不在最前面时（比如窗口关着、在用别的软件），同时发一条系统通知，免得错过。
     func announce(_ icon: String, _ text: String, body: String = "", seconds: Double = 5) {
         toast(icon, text, seconds: seconds)
         addLog("提示：\(text)")
@@ -860,7 +860,7 @@ extension BeanStore {
         }
     }
 
-    /// 豆仓开着的时候，顺带把 MCP 的网址入口也开着，给只认网址的工具（比如 Grok Bot）用。只监听本机。
+    /// 吧唧录音库开着的时候，顺带把 MCP 的网址入口也开着，给只认网址的工具（比如 Grok Bot）用。只监听本机。
     func startMCPServer() {
         guard FileManager.default.isExecutableFile(atPath: Self.cliPath) else { return }
         let p = Process()
@@ -883,7 +883,7 @@ extension BeanStore {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.audio, .movie, .plainText, .text]
         panel.prompt = String(localized: "导入")
-        panel.message = String(localized: "选择录音文件（m4a、mp3、wav 等）或文字文件，豆仓会转写并整理。")
+        panel.message = String(localized: "选择录音文件（m4a、mp3、wav 等）或文字文件，吧唧录音库会转写并整理。")
         guard panel.runModal() == .OK else { return }
         panel.urls.forEach { importFile($0, consume: false) }
     }
@@ -900,7 +900,7 @@ extension BeanStore {
 
     // MARK: 收件箱
 
-    /// 别的工具（命令行、MCP、微信机器人）往这个文件夹里放音频或文字，豆仓自动收进来整理。
+    /// 别的工具（命令行、MCP、微信机器人）往这个文件夹里放音频或文字，吧唧录音库自动收进来整理。
     var inboxFolder: URL { folder.deletingLastPathComponent().appendingPathComponent("Inbox", isDirectory: true) }
 
     func watchInbox() {

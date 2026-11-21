@@ -2,7 +2,7 @@ import AppKit
 import CryptoKit
 import SwiftUI
 
-/// Renoise 是豆仓用来做视频的那一环。这里管三件事：命令行工具装没装、账户登没登、要不要给 AI 助手也装上 Renoise 插件。
+/// Renoise 是吧唧录音库用来做视频的那一环。这里管三件事：命令行工具装没装、账户登没登、要不要给 AI 助手也装上 Renoise 插件。
 /// 安装走 Renoise 官方公开的发布清单，下载后先核对校验值再放进 ~/.local/bin；每一步都要用户自己点。
 @Observable
 final class RenoiseSetup {
@@ -109,7 +109,7 @@ final class RenoiseSetup {
         await refresh()
     }
 
-    /// 登录：让 Renoise 自己打开浏览器，用户在网页上点「允许并连接」。豆仓不经手密码和密钥。
+    /// 登录：让 Renoise 自己打开浏览器，用户在网页上点「允许并连接」。吧唧录音库不经手密码和密钥。
     func login() async {
         busy = String(localized: "正在等你在浏览器里登录…"); note = nil
         defer { busy = nil }
@@ -158,7 +158,7 @@ struct RenoiseCard: View {
                 Spacer()
                 if renoise.busy != nil || renoise.checking { ProgressView().controlSize(.small) }
             }
-            Text("豆仓里「改写」下面的「做成视频」靠它生成数字人口播。它是按积分收费的服务，每次生成前豆仓都会先报价。")
+            Text("吧唧录音库里「改写」下面的「做成视频」靠它生成数字人口播。它是按积分收费的服务，每次生成前吧唧录音库都会先报价。")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
             step(1, String(localized: "安装命令行工具"), renoise.installed ? String(localized: "已安装 \(renoise.version)") + (renoise.updatable ? String(localized: "，官方最新是 \(renoise.latest)") : "") : String(localized: "从 Renoise 官方下载，核对校验值后放进 ~/.local/bin。"),
@@ -167,7 +167,7 @@ struct RenoiseCard: View {
                 else if renoise.updatable { Button("更新") { Task { await renoise.install() } } }
             }
             step(2, String(localized: "登录账户"), renoise.loggedIn ? String(localized: "已登录") + (renoise.account.isEmpty ? "" : "：\(renoise.account)") + (renoise.balance.map { String(localized: " · 余额 \(Int($0)) 积分") } ?? "")
-                    : String(localized: "会打开浏览器，在网页上点「允许并连接」。豆仓不经手你的密码。"),
+                    : String(localized: "会打开浏览器，在网页上点「允许并连接」。吧唧录音库不经手你的密码。"),
                  done: renoise.loggedIn) {
                 if renoise.installed, !renoise.loggedIn { Button("登录") { Task { await renoise.login() } }.buttonStyle(.glassProminent) }
             }

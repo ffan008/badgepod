@@ -67,7 +67,7 @@ struct WelcomeView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 MascotView(mood: .happy, power: .mid).frame(width: 56, height: 56).accessibilityHidden(true)
-                Text("豆仓").font(.system(size: 22, weight: .bold, design: .rounded)).foregroundStyle(Theme.warm900)
+                Text("吧唧录音库").font(.system(size: 22, weight: .bold, design: .rounded)).foregroundStyle(Theme.warm900)
             }
             .padding(.bottom, 18)
             ForEach(Step.allCases) { s in
@@ -171,7 +171,7 @@ struct WelcomeView: View {
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 0) {
-            heading(String(localized: "欢迎来到豆仓"), String(localized: "录音豆负责听，豆仓负责把它变成文字和纪要。接下来几步把要准备的东西过一遍，几分钟就好；每一步都能先跳过。"))
+            heading(String(localized: "欢迎来到吧唧录音库"), String(localized: "录音豆负责听，吧唧录音库负责把它变成文字和纪要。接下来几步把要准备的东西过一遍，几分钟就好；每一步都能先跳过。"))
             VStack(spacing: 0) {
                 feature("waveform", String(localized: "录完自动变成纪要"), String(localized: "连上录音豆自动下载，在这台 Mac 上转成文字，整理出摘要、决定和待办。"))
                 Divider().padding(.leading, 62)
@@ -179,7 +179,7 @@ struct WelcomeView: View {
                 Divider().padding(.leading, 62)
                 feature("square.stack.3d.up", String(localized: "一个地方管所有声音"), String(localized: "录音豆、录音卡、Mac 自己录、导入的音频、视频链接、飞书妙记，都在这里，标着来源。"))
                 Divider().padding(.leading, 62)
-                feature("sparkles", String(localized: "AI 助手直接查"), String(localized: "Claude、Codex 这些助手连上后，可以直接问豆仓里的录音、纪要和待办。"))
+                feature("sparkles", String(localized: "AI 助手直接查"), String(localized: "Claude、Codex 这些助手连上后，可以直接问吧唧录音库里的录音、纪要和待办。"))
             }
             .padding(.vertical, 4)
             .panel(radius: Theme.Radius.panel)
@@ -251,7 +251,7 @@ struct WelcomeView: View {
 
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 0) {
-            heading(String(localized: "豆仓需要的权限"), String(localized: "每一项都写了用来做什么。没开的点「去打开」，会直接跳到系统设置里对应的地方；开好回来这里会自动变成已开。"))
+            heading(String(localized: "吧唧录音库需要的权限"), String(localized: "每一项都写了用来做什么。没开的点「去打开」，会直接跳到系统设置里对应的地方；开好回来这里会自动变成已开。"))
             VStack(spacing: 0) {
                 ForEach(Array(Permissions.Kind.allCases.enumerated()), id: \.element) { i, k in
                     if i > 0 { Divider().padding(.leading, 62) }
@@ -278,8 +278,8 @@ struct WelcomeView: View {
                 }
                 Divider().padding(.leading, 62)
                 row(icon: "cloud", title: String(localized: "飞书妙记同步"),
-                    detail: FeishuSync.shared.link == .ready ? String(localized: "已连上你的飞书。手机 App 同步走的录音会在设备页列出来，可以拉回豆仓。")
-                        : String(localized: "手机上的录音豆 App 先连上录音豆的话，录音会被同步进飞书、录音豆上就没有了。装好飞书命令行工具并授权后，豆仓能把它们拉回来。"),
+                    detail: FeishuSync.shared.link == .ready ? String(localized: "已连上你的飞书。手机 App 同步走的录音会在设备页列出来，可以拉回吧唧录音库。")
+                        : String(localized: "手机上的录音豆 App 先连上录音豆的话，录音会被同步进飞书、录音豆上就没有了。装好飞书命令行工具并授权后，吧唧录音库能把它们拉回来。"),
                     ok: FeishuSync.shared.link == .ready) {
                     Button("看步骤") { nav.route = .device; finish() }.buttonStyle(.glass)
                 }
@@ -293,8 +293,8 @@ struct WelcomeView: View {
                 }
                 Divider().padding(.leading, 62)
                 row(icon: "sparkles", title: String(localized: "连上 AI 助手"),
-                    detail: connector.connectedCount > 0 ? String(localized: "已经连上 \(connector.connectedCount) 个。在它们那边就能直接问豆仓里的内容。")
-                        : String(localized: "Claude、Codex、OpenClaw、Grok Bot 都可以。连上后在它们那边就能直接问豆仓里的录音和待办。"),
+                    detail: connector.connectedCount > 0 ? String(localized: "已经连上 \(connector.connectedCount) 个。在它们那边就能直接问吧唧录音库里的内容。")
+                        : String(localized: "Claude、Codex、OpenClaw、Grok Bot 都可以。连上后在它们那边就能直接问吧唧录音库里的录音和待办。"),
                     ok: connector.connectedCount > 0) {
                     Button("去连接") { openWindow(id: "connect") }.buttonStyle(.glass)
                 }

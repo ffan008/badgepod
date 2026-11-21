@@ -4,7 +4,7 @@ import BeanKit
 import SwiftUI
 
 /// 语音输入：按住一个键（默认右 Option，可改），对着录音豆说话，松开后文字出现在当前光标处。
-/// 录音豆在这里当一支随身麦克风用：它边录边通过蓝牙把声音传过来，豆仓在本机转成文字。
+/// 录音豆在这里当一支随身麦克风用：它边录边通过蓝牙把声音传过来，吧唧录音库在本机转成文字。
 @Observable
 final class Dictation {
     enum Phase: Equatable { case idle, preparing, listening, working, done(String), failed(String) }
@@ -205,7 +205,7 @@ final class Dictation {
             }
             lastText = text
             store.addLog("语音输入结果：\(text)")
-            // 打进了哪个软件：豆仓的提示框不抢前台，这时最前面的就是要打字的那个
+            // 打进了哪个软件：吧唧录音库的提示框不抢前台，这时最前面的就是要打字的那个
             let target = NSWorkspace.shared.frontmostApplication.flatMap { $0.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : $0.localizedName }
             if !dryRun { insert(text) }
             // 打字之外，把这段话也记进侧栏的「语音输入」（设置里可关；「试一次」不记）

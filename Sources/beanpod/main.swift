@@ -1,4 +1,4 @@
-// beanpod：让别的工具读写豆仓。
+// beanpod：让别的工具读写吧唧录音库。
 //
 //   beanpod mcp                       作为 MCP 服务运行（stdio），给 Claude、OpenClaw、Grok 等 agent 用
 //   beanpod serve [--port 8791]       作为 MCP 服务运行（HTTP），给只认网址的工具用，只监听本机
@@ -6,17 +6,17 @@
 //   beanpod show <id> [--transcript]  看一条录音的纪要（和文字稿）
 //   beanpod todos [--all]             待办
 //   beanpod topics                    话题、场景、人物一览
-//   beanpod add-note 标题 < 文本       把一段文字存进豆仓
-//   beanpod add-audio 文件路径         把一个音频文件交给豆仓转写整理
+//   beanpod add-note 标题 < 文本       把一段文字存进吧唧录音库
+//   beanpod add-audio 文件路径         把一个音频文件交给吧唧录音库转写整理
 //
-// 读是直接读豆仓的记录文件，只读不改。写是把文件放进豆仓的收件箱，由豆仓 App 自己入库。
+// 读是直接读吧唧录音库的记录文件，只读不改。写是把文件放进吧唧录音库的收件箱，由吧唧录音库 App 自己入库。
 
 import Foundation
 import Network
 
 // MARK: - 数据
 
-let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("BeanPod")
+let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("BadgePod")
 let libraryURL = root.appendingPathComponent("Recordings/library.json")
 let inboxURL = root.appendingPathComponent("Inbox", isDirectory: true)
 
@@ -52,8 +52,8 @@ struct Rec {
 func load() -> [Rec] {
     guard let data = try? Data(contentsOf: libraryURL),
           let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-    // 语音输入（按住键说的话）默认不给 AI 助手查，和豆仓里知识库的设置一致
-    let withDictation = UserDefaults(suiteName: "com.andyhu.beanpod")?.bool(forKey: "dictationInKnowledge") ?? false
+    // 语音输入（按住键说的话）默认不给 AI 助手查，和吧唧录音库里知识库的设置一致
+    let withDictation = UserDefaults(suiteName: "com.ffan008.badgepod")?.bool(forKey: "dictationInKnowledge") ?? false
     return list.filter { withDictation || ($0["origin"] as? String) != "语音输入" }
         .map(Rec.init).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
 }
@@ -186,7 +186,7 @@ func addNote(title: String, text: String) -> String {
     let safeTitle = title.replacingOccurrences(of: "\n", with: " ")
     do {
         try "# \(safeTitle)\n\n\(body)\n".write(to: inboxURL.appendingPathComponent(name), atomically: true, encoding: .utf8)
-        return "已放进豆仓收件箱。豆仓 App 开着的话，几秒内会入库并整理。"
+        return "已放进吧唧录音库收件箱。吧唧录音库 App 开着的话，几秒内会入库并整理。"
     } catch { return "保存失败：\(error.localizedDescription)" }
 }
 
@@ -199,7 +199,7 @@ func addAudio(path: String) -> String {
     let dst = inboxURL.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(src.lastPathComponent)")
     do {
         try FileManager.default.copyItem(at: src, to: dst)
-        return "已把「\(src.lastPathComponent)」放进豆仓收件箱。豆仓 App 开着的话会自动转写整理，稍后可以用 search 查到。"
+        return "已把「\(src.lastPathComponent)」放进吧唧录音库收件箱。吧唧录音库 App 开着的话会自动转写整理，稍后可以用 search 查到。"
     } catch { return "复制失败：\(error.localizedDescription)" }
 }
 
@@ -229,15 +229,15 @@ let tools: [[String: Any]] = [
      "description": "列出所有录音里整理出来的待办事项，默认只列未完成的。",
      "inputSchema": ["type": "object", "properties": ["include_done": prop("boolean", "是否包含已完成的")]]],
     ["name": "list_topics",
-     "description": "豆仓概览：录音总数和时长，各场景、话题、人物出现的次数。想知道用户最近在忙什么、有哪些素材时先调这个。",
+     "description": "吧唧录音库概览：录音总数和时长，各场景、话题、人物出现的次数。想知道用户最近在忙什么、有哪些素材时先调这个。",
      "inputSchema": ["type": "object", "properties": [:] as [String: Any]]],
     ["name": "add_note",
-     "description": "把一段文字（聊天记录、想法、摘录、语音转出来的文字）存进豆仓，豆仓会像对待录音一样判断场景并整理成纪要。",
+     "description": "把一段文字（聊天记录、想法、摘录、语音转出来的文字）存进吧唧录音库，吧唧录音库会像对待录音一样判断场景并整理成纪要。",
      "inputSchema": ["type": "object", "required": ["title", "text"], "properties": [
         "title": prop("string", "一句话标题"), "text": prop("string", "正文"),
      ]]],
     ["name": "add_audio",
-     "description": "把这台电脑上的一个音频文件（比如微信里收到的语音、电话录音）交给豆仓转写并整理。",
+     "description": "把这台电脑上的一个音频文件（比如微信里收到的语音、电话录音）交给吧唧录音库转写并整理。",
      "inputSchema": ["type": "object", "required": ["path"], "properties": ["path": prop("string", "音频文件的绝对路径")]]],
 ]
 
@@ -277,7 +277,7 @@ func handle(_ msg: [String: Any]) -> [String: Any]? {
         result = ["protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                   "capabilities": ["tools": [:] as [String: Any]],
                   "serverInfo": ["name": "beanpod", "version": "0.2.0"],
-                  "instructions": "豆仓保存着用户用录音豆录下的内容和整理出的纪要。回答涉及用户说过什么、开过什么会、答应过什么事时，先用这里的工具查，并在回答里说明依据的是哪条录音。"]
+                  "instructions": "吧唧录音库保存着用户用录音豆录下的内容和整理出的纪要。回答涉及用户说过什么、开过什么会、答应过什么事时，先用这里的工具查，并在回答里说明依据的是哪条录音。"]
     case "ping": result = [:]
     case "tools/list": result = ["tools": tools]
     case "tools/call":
@@ -313,7 +313,7 @@ func runHTTP(port: UInt16) {
     listener.stateUpdateHandler = { state in
         if case .failed(let e) = state { print("监听失败：\(e)"); exit(1) }
         if case .waiting(let e) = state { print("端口 \(port) 暂时用不了：\(e)"); exit(1) }
-        if case .ready = state { print("豆仓 MCP 已在 http://127.0.0.1:\(port)/mcp 就绪") ; fflush(stdout) }
+        if case .ready = state { print("吧唧录音库 MCP 已在 http://127.0.0.1:\(port)/mcp 就绪") ; fflush(stdout) }
     }
     listener.start(queue: .global())
     dispatchMain()
@@ -390,7 +390,7 @@ case "add-note":
 case "add-audio": print(args.first.map(addAudio) ?? "用法：beanpod add-audio <文件路径>")
 default:
     print("""
-    beanpod：让别的工具读写豆仓
+    beanpod：让别的工具读写吧唧录音库
 
       beanpod mcp                          作为 MCP 服务运行，给 Claude、OpenClaw、Grok 等 agent 用
       beanpod serve [--port 8791]          同上，但走 HTTP，地址是 http://127.0.0.1:8791/mcp
@@ -398,8 +398,8 @@ default:
       beanpod show <id> [--transcript]     一条录音的纪要
       beanpod todos [--all]                待办
       beanpod topics                       场景、话题、人物一览
-      beanpod add-note 标题 < 文本          把文字存进豆仓
-      beanpod add-audio <文件>              把音频交给豆仓转写整理
+      beanpod add-note 标题 < 文本          把文字存进吧唧录音库
+      beanpod add-audio <文件>              把音频交给吧唧录音库转写整理
 
     日期可以写 2026-11-12、today、yesterday、7d。
     """)

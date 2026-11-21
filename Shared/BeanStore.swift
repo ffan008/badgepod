@@ -40,11 +40,11 @@ final class BeanStore {
     @ObservationIgnored var syncOnConnect = false
     /// 刚连上、第一份清单还没回来：回来后一定说一句（有几条新录音 / 都同步过了 / 有录音被别处取走）。
     @ObservationIgnored var reportOnConnect = false
-    /// 上次连接时录音豆里有哪些录音。下次连上对比：少了的又不是豆仓删的，多半是手机那边连过、同步走了。
+    /// 上次连接时录音豆里有哪些录音。下次连上对比：少了的又不是吧唧录音库删的，多半是手机那边连过、同步走了。
     @ObservationIgnored var lastDeviceFiles: Set<UInt32> = Set((UserDefaults.standard.array(forKey: "lastDeviceFiles") as? [NSNumber] ?? []).map(\.uint32Value)) {
         didSet { UserDefaults.standard.set(lastDeviceFiles.map { NSNumber(value: $0) }, forKey: "lastDeviceFiles") }
     }
-    /// 豆仓自己发过删除命令的录音，对比时不算「被取走」。
+    /// 吧唧录音库自己发过删除命令的录音，对比时不算「被取走」。
     @ObservationIgnored var deletedOnDevice: Set<UInt32> = []
 
     /// 语音输入时的实时收音：录音豆边录边把音频传过来。
@@ -90,9 +90,9 @@ final class BeanStore {
     @ObservationIgnored var meterTask: Task<Void, Never>?
     /// 这次录音里打过的重点标记（秒）。
     var liveMarks: [TimeInterval] = []
-    /// 这条录音是什么时候点的开始，用来把豆仓里点的标记对回下载下来的那条录音。
+    /// 这条录音是什么时候点的开始，用来把吧唧录音库里点的标记对回下载下来的那条录音。
     @ObservationIgnored private var sessionStart: Date?
-    /// 在豆仓里点的标记，等这条录音下载下来再写进去。
+    /// 在吧唧录音库里点的标记，等这条录音下载下来再写进去。
     @ObservationIgnored var pendingMarks: [(start: Date, file: UInt32, marks: [TimeInterval])] = []
     var rewriting: Set<UInt32> = []
     /// 正在让 AI 重新起标题的录音。
@@ -202,7 +202,7 @@ final class BeanStore {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
         #else
         case .screenPermission, .micPermission:
-            // 手机上只能跳到豆仓自己的那一页设置
+            // 手机上只能跳到吧唧录音库自己的那一页设置
             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
         #endif
         case .settings, .device: break      // 这两个要换页面，由界面自己处理
@@ -272,7 +272,7 @@ final class BeanStore {
 
     let folder: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent(BeanStore.demo ? "BeanPod/Demo/Recordings" : "BeanPod/Recordings", isDirectory: true)
+        let dir = base.appendingPathComponent(BeanStore.demo ? "BadgePod/Demo/Recordings" : "BadgePod/Recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -311,7 +311,7 @@ final class BeanStore {
             if let self, self.link == .idle { self.scan() }
             self?.card.scanBriefly()
         }
-        addLog("豆仓启动，本地录音 \(recordings.count) 条")
+        addLog("吧唧录音库启动，本地录音 \(recordings.count) 条")
     }
 
     // MARK: 连接
@@ -517,7 +517,7 @@ final class BeanStore {
         }
     }
 
-    /// 在录音豆上按键停下了录音（不是豆仓让它停的）。
+    /// 在录音豆上按键停下了录音（不是吧唧录音库让它停的）。
     /// 以前只把状态改成「没在录」，列表里那条还挂着「正在录 · 还在录音豆里」，要手动刷新、手动下载。
     /// 现在：收掉实时出字，按设置问一句留不留，然后重新列一遍、把它下载下来转写整理。
     func deviceStopped(file: UInt32, finished: Bool, seconds: TimeInterval = 0) {
@@ -615,7 +615,7 @@ final class BeanStore {
                 let wasRecording = info?.recording == true
                 info = parsed
                 caseChanged(from: wasInCase, to: parsed.micCharging)
-                // 它刚才在录、现在停了，而且不是豆仓让它停的（豆仓点暂停或结束时会先把状态改掉，走不到这里）：
+                // 它刚才在录、现在停了，而且不是吧唧录音库让它停的（吧唧录音库点暂停或结束时会先把状态改掉，走不到这里）：
                 // 是在录音豆上按的键。让实时出字把最后一句收掉，再重新列一遍，该同步的拉下来
                 if wasRecording, !parsed.recording, macRec == .off {
                     deviceStopped(file: currentDeviceFile, finished: false)
@@ -643,7 +643,7 @@ final class BeanStore {
             // 设备会把指令原样回显：01 是开始了，02 是暂停了。以它为准更新状态，
             // 否则语音输入松手后界面还以为在录，下一次按键会被当成「设备正忙」
             if p.isSuccess, let op = p.payload.first {
-                // 豆仓自己点暂停、结束时会先把状态改掉；这里还当它在录，说明是在录音豆上按的键
+                // 吧唧录音库自己点暂停、结束时会先把状态改掉；这里还当它在录，说明是在录音豆上按的键
                 let fromDevice = macRec == .off && (info?.recording == true || sessionOpen)
                 let file = currentDeviceFile
                 switch op {
@@ -657,7 +657,7 @@ final class BeanStore {
                     let seconds = elapsed()
                     info?.recording = false; recordingSince = nil; elapsedBase = 0
                     sessionOpen = false; currentDeviceFile = 0
-                    // 在录音豆上按键结束了这一条：和在豆仓里点「结束」一样，问留不留、然后下载转写
+                    // 在录音豆上按键结束了这一条：和在吧唧录音库里点「结束」一样，问留不留、然后下载转写
                     if fromDevice { deviceStopped(file: file, finished: true, seconds: seconds) }
                 default: break
                 }
@@ -697,7 +697,7 @@ final class BeanStore {
                 let fid = UInt32(b[0]) | UInt32(b[1]) << 8 | UInt32(b[2]) << 16 | UInt32(b[3]) << 24
                 if fid != 0 { currentDeviceFile = fid }
             }
-            // 不是豆仓点的开始，是按了录音豆上的键：这边的计时、实时出字都要跟着启动。
+            // 不是吧唧录音库点的开始，是按了录音豆上的键：这边的计时、实时出字都要跟着启动。
             // 以前只把状态标成「录音中」，计时停在 0:00，要等一分钟一次的状态查询才突然开始走。
             if live == nil, recordingSince == nil, macRec == .off, b.count >= 4 {
                 let fid = UInt32(b[0]) | UInt32(b[1]) << 8 | UInt32(b[2]) << 16 | UInt32(b[3]) << 24
@@ -848,7 +848,7 @@ final class BeanStore {
     }
 
     /// 连上后第一份清单回来时一定说一句：有新录音（自动同步那边会说「开始同步」）、都同步过了、
-    /// 或者上次在录音豆里的录音不见了又不是豆仓删的——录音豆同一时间只连一台设备，多半是手机那边连过、同步走了。
+    /// 或者上次在录音豆里的录音不见了又不是吧唧录音库删的——录音豆同一时间只连一台设备，多半是手机那边连过、同步走了。
     private func reportConnected(gone: Set<UInt32>) {
         let open = sessionOpen ? currentDeviceFile : 0
         let pending = recordings.filter { $0.onDevice && !$0.downloaded && !$0.inProgress && $0.id != open }.count
@@ -856,14 +856,14 @@ final class BeanStore {
             !recordings.contains { $0.id == id && $0.downloaded } && !trash.contains { $0.recording.id == id }
         }.count
         if !gone.isEmpty {
-            addLog("上次在录音豆里的 \(gone.count) 条不在了，豆仓没删过（其中 \(missed) 条没下载过）：\(gone.sorted().map(String.init).joined(separator: " "))")
+            addLog("上次在录音豆里的 \(gone.count) 条不在了，吧唧录音库没删过（其中 \(missed) 条没下载过）：\(gone.sorted().map(String.init).joined(separator: " "))")
         }
         if pending > 0 {
             guard !settings.autoDownload else { return }
             announce("arrow.down.circle", String(localized: "录音豆里有 \(pending) 条新录音，自动下载关着，可以在录音列表里下载"))
         } else if !gone.isEmpty {
             announce("iphone", String(localized: "录音豆里没有新录音：上次在里面的 \(gone.count) 条不见了，可能被手机同步走了"),
-                     body: (missed > 0 ? String(localized: "其中 \(missed) 条豆仓还没下载过。") : "")
+                     body: (missed > 0 ? String(localized: "其中 \(missed) 条吧唧录音库还没下载过。") : "")
                         + String(localized: "录音豆同一时间只连一台设备，手机上的录音豆 App 或飞书连过它的话，会把录音同步走，这期间新录的也在那边。"),
                      seconds: 10)
         } else if info?.recording != true, open == 0 {
@@ -975,7 +975,7 @@ final class BeanStore {
             if let i = recordings.firstIndex(where: { $0.id == id }) {
                 recordings[i].downloaded = true
                 recordings[i].duration = seconds
-                // 重点标记：设备上按的（切片里带着）加上在豆仓里点的
+                // 重点标记：设备上按的（切片里带着）加上在吧唧录音库里点的
                 var marks = sliceMarks.map { Double($0) * 0.02 }
                 if let k = pendingMarks.firstIndex(where: { m in
                     m.file == id || recordings[i].date.map { abs($0.timeIntervalSince(m.start)) < 15 } ?? false

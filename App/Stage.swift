@@ -70,7 +70,7 @@ struct RecordStage: View {
             }
             .buttonStyle(.glass)
             .keyboardShortcut(.cancelAction)
-            .help("收起舞台，回到豆仓。录音不会停（Esc）")
+            .help("收起舞台，回到吧唧录音库。录音不会停（Esc）")
         }
     }
 

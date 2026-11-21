@@ -1,12 +1,12 @@
 import Foundation
 
-/// 视频号：yt-dlp 不认这个平台，豆仓自己走一条路，办法照用户那个下载工具（social-dl）来：
+/// 视频号：yt-dlp 不认这个平台，吧唧录音库自己走一条路，办法照用户那个下载工具（social-dl）来：
 ///
 /// 1. 视频号网页版的作品接口不登录也能问，但只给标题、作者和封面，不给视频地址。
 /// 2. 腾讯元宝能解析视频号链接：用微信扫码登录元宝之后，把分享链接交给它，它回一张视频号的预览凭证。
 /// 3. 拿这张凭证再去问视频号的作品接口，就有视频地址了。
 ///
-/// 登录在豆仓自己的登录窗口里，用户自己扫码；豆仓只把元宝的登录状态存在这台 Mac 上（和别的平台一样，设置里能清掉）。
+/// 登录在吧唧录音库自己的登录窗口里，用户自己扫码；吧唧录音库只把元宝的登录状态存在这台 Mac 上（和别的平台一样，设置里能清掉）。
 extension BeanStore {
     func importChannels(_ id: UUID, _ url: String) async {
         let platform = "视频号"
@@ -25,7 +25,7 @@ extension BeanStore {
 
         let file = Self.cookieFile(platform)
         guard let cookie = ChannelsAPI.cookieHeader(file) else {
-            addLog("视频号要先在豆仓里扫码登录腾讯元宝")
+            addLog("视频号要先在吧唧录音库里扫码登录腾讯元宝")
             linkLogin = LinkLoginRequest(platform: platform, url: url, hint: known)
             return
         }
@@ -41,7 +41,7 @@ extension BeanStore {
                                   detail: String(localized: "\(known)刚登录的腾讯元宝没解析出这条视频\(why.isEmpty ? "" : "（\(why)）")。可能这条作品不让在网页上看，过一会儿再试。"))
             } else {
                 try? FileManager.default.removeItem(at: file)
-                linkLogin = LinkLoginRequest(platform: platform, url: url, hint: String(localized: "\(known)上次在豆仓登录的腾讯元宝过期了，再扫一次码。"))
+                linkLogin = LinkLoginRequest(platform: platform, url: url, hint: String(localized: "\(known)上次在吧唧录音库登录的腾讯元宝过期了，再扫一次码。"))
             }
         case .failed(let why):
             addLog("视频号导入失败：\(why)")
@@ -155,7 +155,7 @@ nonisolated enum ChannelsAPI {
         return Feed(title: title, author: author, videos: videos)
     }
 
-    /// 从豆仓存下的登录状态（cookies.txt）里取元宝那几条，拼成请求头。没扫码登录过就是 nil。
+    /// 从吧唧录音库存下的登录状态（cookies.txt）里取元宝那几条，拼成请求头。没扫码登录过就是 nil。
     static func cookieHeader(_ file: URL) -> String? {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
         var parts: [String] = [], seen = Set<String>()

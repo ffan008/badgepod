@@ -22,7 +22,7 @@ public enum OggOpus {
         var head = Array("OpusHead".utf8) + [1, 1]
         head += le16(preSkip) + le32(48000) + le16(0) + [0]
         out += page([Data(head)], serial: serial, seq: seq, granule: 0, flags: 0x02); seq += 1
-        let vendor = Array("BeanPod".utf8)
+        let vendor = Array("BadgePod".utf8)
         let tags = Array("OpusTags".utf8) + le32(UInt32(vendor.count)) + vendor + le32(0)
         out += page([Data(tags)], serial: serial, seq: seq, granule: 0, flags: 0); seq += 1
 

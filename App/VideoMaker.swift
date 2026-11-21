@@ -4,11 +4,11 @@ import SwiftUI
 
 /// 把一篇口播稿做成带完整包装的数字人口播视频。
 ///
-/// 豆仓自己不剪，也不在后台跑模型：整条片子交给 Claude 桌面版——在里面新开一个 Claude Code 会话（工作目录就是这条视频的
+/// 吧唧录音库自己不剪，也不在后台跑模型：整条片子交给 Claude 桌面版——在里面新开一个 Claude Code 会话（工作目录就是这条视频的
 /// 工程文件夹，提示词已经填好），由它按 Renoise MCP 上托管的两个 skill 做：
 /// ai-avatar（写稿、分镜、生成数字人出镜段、检查、拼成 A-roll）→ talking-head-editor（在 Renoise 云端沙盒里
 /// 粗剪、字幕花字、信息卡、画中画、B-roll、音效音乐、渲染质检）。报价和确认都在 Claude 对话里，用的是用户桌面版的账号。
-/// 豆仓负责三件事：让用户选风格和主播、把任务交过去、盯着工程文件夹里的 quote/progress/result 把进度和成片接回来。
+/// 吧唧录音库负责三件事：让用户选风格和主播、把任务交过去、盯着工程文件夹里的 quote/progress/result 把进度和成片接回来。
 @Observable
 final class VideoMaker {
     /// talking-head-editor 的包装风格。
@@ -67,7 +67,7 @@ final class VideoMaker {
 
     static let renoiseMCP = "https://renoise.ai/api/public/mcp"
 
-    /// 主播都是用户自己添加的（App/Hosts.swift），豆仓不带默认人物。
+    /// 主播都是用户自己添加的（App/Hosts.swift），吧唧录音库不带默认人物。
     let library = HostLibrary()
     var hosts: [Host] { library.hosts }
     /// 选中的主播；记住上次选的，下次打开还是它。
@@ -184,7 +184,7 @@ final class VideoMaker {
     /// 不再跟这一条：Claude 里那个会话要在 Claude 里自己停。
     func abandon(store: BeanStore) {
         if let job { FileManager.default.createFile(atPath: job.appendingPathComponent(".closed").path, contents: nil) }
-        store.addLog("做视频：豆仓不再跟进 \(job?.lastPathComponent ?? "")")
+        store.addLog("做视频：吧唧录音库不再跟进 \(job?.lastPathComponent ?? "")")
         job = nil
         quote = nil; stepIndex = 0; stepDetail = ""; started = nil
         phase = .idle
@@ -243,7 +243,7 @@ final class VideoMaker {
         }
     }
 
-    /// 还没交付、豆仓也没放弃的工程（三天内开的）
+    /// 还没交付、吧唧录音库也没放弃的工程（三天内开的）
     private func activeJobs(_ store: BeanStore) -> [URL] {
         let fm = FileManager.default
         let all = (try? fm.contentsOfDirectory(at: Self.jobsRoot(store), includingPropertiesForKeys: nil)) ?? []
@@ -413,13 +413,13 @@ final class VideoMaker {
     /// 填进 Claude 输入框的那句话（用户看得到，按发送才开始）
     /// 带上工程文件夹的完整路径：Claude 桌面版打开新会话时不一定用链接里给的文件夹（实测落在了桌面），不能靠「当前目录」
     private static func prompt(_ job: URL) -> String {
-        "这是豆仓发来的视频任务。工程文件夹：\(job.path)\n先 cd 到这个文件夹，照里面的 TASK.md，用 Renoise MCP 的 ai-avatar 和 talking-head-editor 两个 skill，把 source.md 这篇口播稿做成带完整包装的数字人口播视频。先规划报价，我确认了再花积分。"
+        "这是吧唧录音库发来的视频任务。工程文件夹：\(job.path)\n先 cd 到这个文件夹，照里面的 TASK.md，用 Renoise MCP 的 ai-avatar 和 talking-head-editor 两个 skill，把 source.md 这篇口播稿做成带完整包装的数字人口播视频。先规划报价，我确认了再花积分。"
     }
 
     private static let task = """
     # BeanPod video job
 
-    This job was started from the BeanPod app (豆仓). The user is in this conversation: talk to them in Simplified Chinese, briefly.
+    This job was started from the BeanPod app (吧唧录音库). The user is in this conversation: talk to them in Simplified Chinese, briefly.
 
     Goal: turn the Chinese talking-head script in ./source.md into a finished, fully packaged AI-avatar talking-head video, using the Renoise MCP tools and the Renoise hosted skills:
     ai-avatar (script and performance, takes, generate, check, join the A-roll) → talking-head-editor (rough cut, sentence-by-sentence edit plan, captions and keyword big text, info cards, picture-in-picture, B-roll, sound effects, music, render, QA, in the Renoise cloud sandbox).
@@ -619,13 +619,13 @@ struct VideoSheet: View {
                 renaming = nil
             }
         }
-        .confirmationDialog("从豆仓移除「\(removing?.name ?? "")」？", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+        .confirmationDialog("从吧唧录音库移除「\(removing?.name ?? "")」？", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("移除", role: .destructive) {
                 if let h = removing { maker.library.remove(h); if maker.host?.id == h.id { maker.host = nil }; maker.loadHosts() }
                 removing = nil
             }
         } message: {
-            Text("只从豆仓里去掉。这张照片在你 Renoise 账号里的素材不会被删除。")
+            Text("只从吧唧录音库里去掉。这张照片在你 Renoise 账号里的素材不会被删除。")
         }
     }
 
@@ -721,7 +721,7 @@ struct VideoSheet: View {
                 ForEach(q.notes, id: \.self) { note in
                     Label(note, systemImage: "exclamationmark.triangle.fill").font(.callout).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true)
                 }
-                Label("要做就在 Claude 对话里回复确认，它按这个报价加 10% 余量封顶。豆仓会自动跟进度。", systemImage: "bubble.left.and.text.bubble.right")
+                Label("要做就在 Claude 对话里回复确认，它按这个报价加 10% 余量封顶。吧唧录音库会自动跟进度。", systemImage: "bubble.left.and.text.bubble.right")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
                 Text("视频由 AI 生成，出镜的是数字人。发出去之前请自己看一遍，并按平台要求标明「内容由 AI 生成」。")
                     .font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
@@ -759,7 +759,7 @@ struct VideoSheet: View {
             Button("工程目录") { maker.showProject() }.buttonStyle(.borderless)
             if stop {
                 Button("不跟这条了") { maker.abandon(store: store) }.buttonStyle(.borderless)
-                    .help("豆仓不再跟进这条。Claude 里那个会话要在 Claude 里停")
+                    .help("吧唧录音库不再跟进这条。Claude 里那个会话要在 Claude 里停")
             }
             Spacer()
             if maker.phase == .waiting { Button("没打开？再开一次") { maker.openSession() } }

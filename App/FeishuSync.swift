@@ -1,13 +1,13 @@
 import Foundation
 import SwiftUI
 
-/// 从飞书妙记把录音拉回豆仓（设计稿 design/ui/ui_feishu.png）。
+/// 从飞书妙记把录音拉回吧唧录音库（设计稿 design/ui/ui_feishu.png）。
 ///
 /// 为什么要有：录音豆同一时间只连一台设备。手机上的录音豆 App 先连上的话，会把录音同步进飞书妙记，
-/// 录音豆上就没有了，豆仓连上也拿不到。这里借飞书官方命令行工具 lark-cli（用户自己授权）去妙记里找回来。
+/// 录音豆上就没有了，吧唧录音库连上也拿不到。这里借飞书官方命令行工具 lark-cli（用户自己授权）去妙记里找回来。
 ///
-/// - 列表：按时间搜「我的妙记」，和录音库对一遍——已经在豆仓的（包括「最近删除」里的）标「已在豆仓」，其它是「新的」。
-/// - 拉回：有「导出妙记音视频」权限就下载音频，交给豆仓自己转写整理；没有就先拿飞书的文字稿整理成纪要。
+/// - 列表：按时间搜「我的妙记」，和录音库对一遍——已经在吧唧录音库的（包括「最近删除」里的）标「已在吧唧录音库」，其它是「新的」。
+/// - 拉回：有「导出妙记音视频」权限就下载音频，交给吧唧录音库自己转写整理；没有就先拿飞书的文字稿整理成纪要。
 /// - 自动同步：第一次由用户勾选；之后新出现的妙记自动拉回。没勾的记下来，不再问。
 @MainActor @Observable
 final class FeishuSync {
@@ -352,7 +352,7 @@ extension BeanStore {
         return id
     }
 
-    /// 标题：录音豆 App 的默认标题（「soundcore Work_11-12 22:40」）不要，让豆仓整理时自己起；飞书起过的留着。
+    /// 标题：录音豆 App 的默认标题（「soundcore Work_11-12 22:40」）不要，让吧唧录音库整理时自己起；飞书起过的留着。
     private func feishuTitle(_ m: FeishuSync.Minute) -> String? { m.recorded == nil ? m.title : nil }
 
     func importFeishuAudio(_ file: URL, minute m: FeishuSync.Minute) async -> UInt32? {

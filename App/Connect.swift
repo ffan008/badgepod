@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// 能接上豆仓的 AI 助手。接上之后，可以在它们那边直接问「我昨天开会说了什么」，或者让它们把内容存进豆仓。
+/// 能接上吧唧录音库的 AI 助手。接上之后，可以在它们那边直接问「我昨天开会说了什么」，或者让它们把内容存进吧唧录音库。
 enum Assistant: String, CaseIterable, Identifiable {
     case claudeCode, claudeDesktop, codex, openclaw, grok
     var id: String { rawValue }
@@ -29,11 +29,11 @@ enum Assistant: String, CaseIterable, Identifiable {
     /// 接上之后能怎么用，给一句照着说就行的话。
     var example: String {
         switch self {
-        case .claudeCode: String(localized: "在 Claude Code 里说：「查一下豆仓里昨天的会议，把待办列出来」")
-        case .claudeDesktop: String(localized: "在 Claude 里说：「豆仓里关于新品发布都说过什么？」")
-        case .codex: String(localized: "在 Codex 里说：「把豆仓里最新一条录音的脚本拿出来，做成网页」")
-        case .openclaw: String(localized: "在微信里对它说：「帮我查豆仓，这周答应了谁什么事」")
-        case .grok: String(localized: "在 Grok Bot 里添加上面的地址，然后说：「搜一下豆仓里提到黄仁勋的录音」")
+        case .claudeCode: String(localized: "在 Claude Code 里说：「查一下吧唧录音库里昨天的会议，把待办列出来」")
+        case .claudeDesktop: String(localized: "在 Claude 里说：「吧唧录音库里关于新品发布都说过什么？」")
+        case .codex: String(localized: "在 Codex 里说：「把吧唧录音库里最新一条录音的脚本拿出来，做成网页」")
+        case .openclaw: String(localized: "在微信里对它说：「帮我查吧唧录音库，这周答应了谁什么事」")
+        case .grok: String(localized: "在 Grok Bot 里添加上面的地址，然后说：「搜一下吧唧录音库里提到黄仁勋的录音」")
         }
     }
 
@@ -44,7 +44,7 @@ enum Assistant: String, CaseIterable, Identifiable {
         case .claudeDesktop: String(localized: "改 ~/Library/Application Support/Claude/claude_desktop_config.json，改之前会留一份备份。要在 Claude 完全退出的时候连")
         case .codex: String(localized: "用 codex 命令添加，写在 ~/.codex/config.toml")
         case .openclaw: String(localized: "用 openclaw 命令添加，写在 ~/.openclaw/openclaw.json")
-        case .grok: String(localized: "Grok Bot 只认网址：拷贝豆仓的地址，到它的设置里粘贴。豆仓要开着才连得上")
+        case .grok: String(localized: "Grok Bot 只认网址：拷贝吧唧录音库的地址，到它的设置里粘贴。吧唧录音库要开着才连得上")
         }
     }
 
@@ -63,7 +63,7 @@ enum Assistant: String, CaseIterable, Identifiable {
 final class Connector {
     struct State: Equatable {
         var installed = false
-        /// nil 表示看不出来（Grok Bot 的设置豆仓读不到）。
+        /// nil 表示看不出来（Grok Bot 的设置吧唧录音库读不到）。
         var connected: Bool? = false
     }
 
@@ -100,7 +100,7 @@ final class Connector {
         (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     }
 
-    /// 看一遍：每个助手装了没有、接上豆仓没有。只读，不改任何东西。
+    /// 看一遍：每个助手装了没有、接上吧唧录音库没有。只读，不改任何东西。
     func refresh() async {
         checking = true
         defer { checking = false }
@@ -136,7 +136,7 @@ final class Connector {
     }
 
     func connect(_ a: Assistant) async {
-        guard cliInstalled else { notes[a] = (false, String(localized: "豆仓的命令行工具还没装好，连不了。")); return }
+        guard cliInstalled else { notes[a] = (false, String(localized: "吧唧录音库的命令行工具还没装好，连不了。")); return }
         busy.insert(a); defer { busy.remove(a) }
         let cli = "'\(Self.cli)'"
         switch a {
@@ -182,38 +182,38 @@ final class Connector {
         case .claudeDesktop:
             notes[a] = editDesktopConfig { $0["beanpod"] = nil } ? (true, String(localized: "已经断开。重开 Claude 之后生效。")) : (false, String(localized: "没能改 Claude 的设置文件。"))
         case .grok:
-            notes[a] = (true, String(localized: "到 Grok Bot 的设置里把豆仓那一条删掉就行。"))
+            notes[a] = (true, String(localized: "到 Grok Bot 的设置里把吧唧录音库那一条删掉就行。"))
         }
         await refresh()
     }
 
-    /// 试一下：豆仓这边的入口通不通；Claude Code 还能问它自己连上没有。
+    /// 试一下：吧唧录音库这边的入口通不通；Claude Code 还能问它自己连上没有。
     func test(_ a: Assistant) async {
         busy.insert(a); defer { busy.remove(a) }
-        // 像助手那样给豆仓发一次握手，再要一次工具清单
+        // 像助手那样给吧唧录音库发一次握手，再要一次工具清单
         let hello = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"beanpod-test","version":"1"}}}"#
         let list = #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#
         let ours = await Self.shell("printf '%s\\n%s\\n' '\(hello)' '\(list)' | '\(Self.cli)' mcp")
         let tools = ours.output.components(separatedBy: "\"name\"").count - 1
         guard ours.ok, ours.output.contains("search_recordings") else {
-            notes[a] = (false, String(localized: "豆仓这边的入口没有应答。"))
+            notes[a] = (false, String(localized: "吧唧录音库这边的入口没有应答。"))
             return
         }
         switch a {
         case .claudeCode:
             let r = await Self.shell("claude mcp get beanpod")
-            notes[a] = r.output.contains("Connected") ? (true, String(localized: "通了：Claude Code 报告已连接，豆仓给了它 \(max(tools - 1, 1)) 个可用的动作。"))
-                : (false, String(localized: "豆仓这边正常，但 Claude Code 说没连上：\(Self.tail(r.output))"))
+            notes[a] = r.output.contains("Connected") ? (true, String(localized: "通了：Claude Code 报告已连接，吧唧录音库给了它 \(max(tools - 1, 1)) 个可用的动作。"))
+                : (false, String(localized: "吧唧录音库这边正常，但 Claude Code 说没连上：\(Self.tail(r.output))"))
         case .grok:
             let r = await Self.shell("curl -s -m 4 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '\(list)' \(BeanStore.mcpAddress)")
-            notes[a] = r.output.contains("200") ? (true, String(localized: "豆仓的网址入口是通的。Grok Bot 那边有没有填对，要在它里面问一句才知道。"))
-                : (false, String(localized: "豆仓的网址入口没应答，重开一次豆仓再试。"))
+            notes[a] = r.output.contains("200") ? (true, String(localized: "吧唧录音库的网址入口是通的。Grok Bot 那边有没有填对，要在它里面问一句才知道。"))
+                : (false, String(localized: "吧唧录音库的网址入口没应答，重开一次吧唧录音库再试。"))
         default:
-            notes[a] = (true, String(localized: "豆仓这边的入口是通的。\(a.name) 那边要新开一个会话问一句才算真的验证。"))
+            notes[a] = (true, String(localized: "吧唧录音库这边的入口是通的。\(a.name) 那边要新开一个会话问一句才算真的验证。"))
         }
     }
 
-    /// 改 Claude 桌面版的设置：先备份，再只动 mcpServers 里豆仓那一条，别的原样留着。
+    /// 改 Claude 桌面版的设置：先备份，再只动 mcpServers 里吧唧录音库那一条，别的原样留着。
     private func editDesktopConfig(_ change: (inout [String: Any]) -> Void) -> Bool {
         let url = Self.desktopConfig
         var root = Self.json(url) ?? [:]
@@ -247,14 +247,14 @@ struct ConnectView: View {
                     MascotView(mood: connector.connectedCount > 0 ? .happy : .idle, power: .mid).frame(width: 92, height: 92).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 5) {
                         Text("连接 AI 助手").font(.system(size: 28, weight: .bold, design: .rounded))
-                        Text("接上之后，在你常用的 AI 助手里就能直接问豆仓里的录音、纪要和待办，也能让它们把内容存进豆仓。")
+                        Text("接上之后，在你常用的 AI 助手里就能直接问吧唧录音库里的录音、纪要和待办，也能让它们把内容存进吧唧录音库。")
                             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
                 if !connector.cliInstalled {
                     HStack(spacing: 12) {
-                        Label("豆仓的命令行工具还没装好（应该在 ~/.local/bin/beanpod），下面的连接暂时都用不了。", systemImage: "exclamationmark.triangle.fill")
+                        Label("吧唧录音库的命令行工具还没装好（应该在 ~/.local/bin/beanpod），下面的连接暂时都用不了。", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(Theme.accent).frame(maxWidth: .infinity, alignment: .leading)
                         if BeanStore.bundledCLI != nil {
                             Button("装上") {
@@ -276,7 +276,7 @@ struct ConnectView: View {
                     Text("别的工具").font(.headline)
                     Text("支持 MCP 的工具都能接。能运行命令的填：").font(.callout).foregroundStyle(.secondary)
                     copyRow(BeanStore.cliPath + " mcp")
-                    Text("只认网址的填（豆仓开着时才有）：").font(.callout).foregroundStyle(.secondary)
+                    Text("只认网址的填（吧唧录音库开着时才有）：").font(.callout).foregroundStyle(.secondary)
                     copyRow(BeanStore.mcpAddress)
                     Text("这两个入口都只在这台 Mac 上有效，录音不会经过别的服务器。助手拿到内容之后怎么处理，取决于那个助手自己。")
                         .font(.caption).foregroundStyle(.tertiary).padding(.top, 2)
@@ -358,7 +358,7 @@ struct ConnectView: View {
         switch s.connected {
         case .some(true): return String(localized: "已连接")
         case .some(false): return String(localized: "还没连接")
-        case .none: return String(localized: "已安装 · 连没连上豆仓看不出来")
+        case .none: return String(localized: "已安装 · 连没连上吧唧录音库看不出来")
         }
     }
 

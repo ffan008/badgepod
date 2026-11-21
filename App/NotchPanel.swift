@@ -9,7 +9,7 @@ import SwiftUI
 /// - 鼠标移上去就往下展开：设备状态、一键开始录音、用这台 Mac 录、剪贴板里认出来的视频链接一键导入、下载进度。
 ///   移开就收起；点一下会固定展开，再点别处收起。
 /// - 没有刘海的屏幕（外接显示器、老机型）在菜单栏正中放一个同样样式的小胶囊。
-/// 不抢焦点：点面板上的按钮不会把豆仓切到前台。
+/// 不抢焦点：点面板上的按钮不会把吧唧录音库切到前台。
 @MainActor @Observable
 final class NotchPanel {
     var expanded = false
@@ -76,7 +76,7 @@ final class NotchPanel {
                 self.expanded = false
             }
         }
-        // 点在豆仓自己的窗口里（不是这块面板）也算点了别处
+        // 点在吧唧录音库自己的窗口里（不是这块面板）也算点了别处
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             MainActor.assumeIsolated {
                 if let self, self.pinned, event.window !== self.window {
@@ -239,7 +239,7 @@ final class NotchWindow: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// 豆仓不在前台时也要能感知鼠标进出、第一下点击就生效。
+/// 吧唧录音库不在前台时也要能感知鼠标进出、第一下点击就生效。
 final class NotchHostingView: NSHostingView<AnyView> {
     var onHover: ((Bool) -> Void)?
     private var area: NSTrackingArea?

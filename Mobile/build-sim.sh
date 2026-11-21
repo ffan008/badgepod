@@ -33,7 +33,7 @@ cp Shared/MascotArt/*.png $APP/
 sips -z 120 120 Mobile/Assets.xcassets/AppIcon.appiconset/icon_1024.png --out "$APP/AppIcon60x60@2x.png" >/dev/null
 sips -z 180 180 Mobile/Assets.xcassets/AppIcon.appiconset/icon_1024.png --out "$APP/AppIcon60x60@3x.png" >/dev/null
 /usr/libexec/PlistBuddy -x -c "Print" Mobile/Info.plist > $APP/Info.plist
-for kv in "CFBundleExecutable BeanPod" "CFBundleIdentifier com.andyhu.beanpod.mobile" "CFBundleName BeanPod" \
+for kv in "CFBundleExecutable BeanPod" "CFBundleIdentifier com.ffan008.badgepod.mobile" "CFBundleName BeanPod" \
           "CFBundlePackageType APPL" "CFBundleShortVersionString 0.1.0" "CFBundleVersion 1" "MinimumOSVersion 18.0"; do
   k=${kv%% *}; v=${kv#* }
   /usr/libexec/PlistBuddy -c "Set :$k $v" $APP/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :$k string $v" $APP/Info.plist
@@ -47,5 +47,5 @@ echo "编好了：$APP"
 if [ "$1" = "run" ]; then
   xcrun simctl boot "$DEVICE" 2>/dev/null || true
   xcrun simctl install "$DEVICE" $APP
-  xcrun simctl launch "$DEVICE" com.andyhu.beanpod.mobile
+  xcrun simctl launch "$DEVICE" com.ffan008.badgepod.mobile
 fi

@@ -180,7 +180,7 @@ private struct GeneralPane: View {
                 SettingRow(icon: "captions.bubble", title: String(localized: "边录边出字"), detail: String(localized: "录音时在舞台上实时显示文字。")) {
                     Toggle("边录边出字", isOn: $settings.liveTranscribe).labelsHidden().toggleStyle(.switch)
                 }
-                SettingRow(icon: "doc.on.clipboard", title: String(localized: "识别剪贴板里的视频链接"), detail: String(localized: "复制了抖音、B 站、YouTube 这些链接，切回豆仓时提示一键导入。只看链接，不存剪贴板内容。")) {
+                SettingRow(icon: "doc.on.clipboard", title: String(localized: "识别剪贴板里的视频链接"), detail: String(localized: "复制了抖音、B 站、YouTube 这些链接，切回吧唧录音库时提示一键导入。只看链接，不存剪贴板内容。")) {
                     Toggle("识别剪贴板里的视频链接", isOn: $settings.watchClipboard).labelsHidden().toggleStyle(.switch)
                 }
                 SettingRow(icon: "questionmark.bubble", title: String(localized: "录完先问一句留不留"), detail: String(localized: "录完弹一张小卡片，不要的话当场删掉，哪里都不留。十秒不理它就默认留着。")) {
@@ -244,7 +244,7 @@ private struct AppearanceTile: View {
     }
 }
 
-/// 豆仓窗口的缩略图：左边侧栏、红色录音键、右边几条内容。
+/// 吧唧录音库窗口的缩略图：左边侧栏、红色录音键、右边几条内容。
 private struct MiniWindow: View {
     var dark: Bool
 
@@ -284,7 +284,7 @@ private struct DictationPane: View {
         let on = settings.dictationEnabled
         PaneFrame {
             SettingsGroup(footer: String(localized: "把录音豆当随身麦克风：在任何 App 里按住你选的那个键，对着录音豆说话，松开后文字出现在光标处。")) {
-                SettingRow(icon: "mic.fill", title: String(localized: "按住按键说话，松开输入文字"), detail: on ? String(localized: "已打开。按住「\(Dictation.name(of: settings.dictationKey))」试试。") : String(localized: "关着的时候，豆仓不会监听任何按键。")) {
+                SettingRow(icon: "mic.fill", title: String(localized: "按住按键说话，松开输入文字"), detail: on ? String(localized: "已打开。按住「\(Dictation.name(of: settings.dictationKey))」试试。") : String(localized: "关着的时候，吧唧录音库不会监听任何按键。")) {
                     Toggle("语音输入", isOn: Binding(get: { settings.dictationEnabled }, set: {
                         settings.dictationEnabled = $0
                         dictation.refresh()
@@ -333,7 +333,7 @@ private struct DictationPane: View {
             .disabled(!on)
             .opacity(on ? 1 : 0.5)
 
-            SettingsGroup(String(localized: "权限"), footer: String(localized: "豆仓要靠「辅助功能」权限来听到这个按键、把文字打进其他 App。没有权限时，文字只会放进剪贴板。")) {
+            SettingsGroup(String(localized: "权限"), footer: String(localized: "吧唧录音库要靠「辅助功能」权限来听到这个按键、把文字打进其他 App。没有权限时，文字只会放进剪贴板。")) {
                 SettingRow(icon: "hand.raised", title: String(localized: "辅助功能")) {
                     if trusted {
                         StatusPill(ok: true, text: String(localized: "已允许"))
@@ -885,7 +885,7 @@ private struct VocabularyPane: View {
                     TextField("听成了", text: $wrong, prompt: Text("听成了，比如：豆苍")).textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .wrong).onSubmit { focus = .right }
                     Image(systemName: "arrow.right").font(.callout).foregroundStyle(.tertiary).accessibilityHidden(true)
-                    TextField("应该是", text: $right, prompt: Text("应该是，比如：豆仓")).textFieldStyle(.roundedBorder)
+                    TextField("应该是", text: $right, prompt: Text("应该是，比如：吧唧录音库")).textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .right).onSubmit(add)
                     Button("记住", action: add).disabled(!canAdd)
                 }
@@ -934,7 +934,7 @@ private struct ConnectPane: View {
 
     var body: some View {
         PaneFrame {
-            SettingsGroup(String(localized: "AI 助手"), footer: String(localized: "连上之后，在它们那边就能直接查你的录音、纪要和待办，也能把文字和音频存进豆仓。")) {
+            SettingsGroup(String(localized: "AI 助手"), footer: String(localized: "连上之后，在它们那边就能直接查你的录音、纪要和待办，也能把文字和音频存进吧唧录音库。")) {
                 SettingRow(icon: "link", title: "Claude、Codex、OpenClaw、Grok Bot",
                            detail: connector.connectedCount > 0 ? String(localized: "已经连上 \(connector.connectedCount) 个。") : String(localized: "还没有连上任何一个。")) {
                     Button("打开连接页面…") { openWindow(id: "connect") }
@@ -946,7 +946,7 @@ private struct ConnectPane: View {
 
             LoginsGroup()
 
-            SettingsGroup(String(localized: "给其他工具用"), footer: String(localized: "这个地址只在这台电脑上能访问，而且只有豆仓开着的时候才通。")) {
+            SettingsGroup(String(localized: "给其他工具用"), footer: String(localized: "这个地址只在这台电脑上能访问，而且只有吧唧录音库开着的时候才通。")) {
                 SettingRow(icon: "network", title: String(localized: "接入地址")) {
                     Text(BeanStore.mcpAddress).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                     Button(copied ? "已拷贝" : "拷贝") {
@@ -972,7 +972,7 @@ private struct LoginsGroup: View {
     var body: some View {
         let list = store.loggedInPlatforms
         let _ = refresh
-        SettingsGroup(String(localized: "从链接导入时登录过的平台"), footer: String(localized: "导入要登录才能看的内容时，豆仓会弹出登录窗口让你自己登录。登录状态只存在这台 Mac 上。")) {
+        SettingsGroup(String(localized: "从链接导入时登录过的平台"), footer: String(localized: "导入要登录才能看的内容时，吧唧录音库会弹出登录窗口让你自己登录。登录状态只存在这台 Mac 上。")) {
             if list.isEmpty {
                 Text("还没有登录过任何平台。").foregroundStyle(.secondary)
             }

@@ -3,7 +3,7 @@ import Security
 
 /// 云端服务的密钥存在系统钥匙串里，不放 UserDefaults（那是明文的 plist）。
 enum Keychain {
-    private static let service = "com.andyhu.beanpod"
+    private static let service = "com.ffan008.badgepod"
 
     static func get(_ account: String) -> String {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,

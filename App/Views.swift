@@ -29,7 +29,7 @@ enum Route: Hashable {
 final class Navigator {
     var route: Route = .dashboard
     var selection: UInt32?
-    /// 录音舞台是不是铺开着。录音一开始就铺开，可以收起来接着用豆仓。
+    /// 录音舞台是不是铺开着。录音一开始就铺开，可以收起来接着用吧唧录音库。
     var stageOpen = false
     /// 上手引导是不是开着。
     var welcomeOpen = false
@@ -161,7 +161,7 @@ struct RootView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: clipboard.offer?.url)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in clipboard.check(store) }
         .task {
-            // 豆仓开在前台时，复制了一条链接再切回来之前也能看到：在前台每两秒看一眼剪贴板有没有变
+            // 吧唧录音库开在前台时，复制了一条链接再切回来之前也能看到：在前台每两秒看一眼剪贴板有没有变
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 if NSApp.isActive { clipboard.check(store) }
@@ -336,7 +336,7 @@ struct Sidebar: View {
                     .clipShape(.rect(cornerRadius: Theme.Radius.card))
                     .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.warm300.opacity(0.5), lineWidth: 2))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("豆仓").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warm900)
+                    Text("吧唧录音库").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warm900)
                     Text("语音工作台").font(.system(size: 11)).foregroundStyle(Theme.warm500)
                 }
                 Spacer(minLength: 0)
@@ -690,7 +690,7 @@ struct Panel: ViewModifier {
 }
 
 /// 内容区的底：暖灰，平的，不加光晕。深色是暖黑。
-/// 不透出桌面：桌面是什么颜色，豆仓就跟着变灰变花，没有自己的样子。
+/// 不透出桌面：桌面是什么颜色，吧唧录音库就跟着变灰变花，没有自己的样子。
 struct Backdrop: View {
     var body: some View {
         Theme.dynamic(light: (0.976, 0.969, 0.961), dark: (0.110, 0.098, 0.090)).ignoresSafeArea()
@@ -1113,7 +1113,7 @@ struct RecordingsView: View {
         if quick != .all { return quick.emptyHint }
         if source != nil { return String(localized: "在「来源」里换回「全部来源」，就能看到其它录音。") }
         switch nav.route {
-        case .materials: return String(localized: "把抖音、B 站、YouTube 这些视频链接贴到左边的框里，豆仓会下载声音、转成文字稿，再整理成纪要。")
+        case .materials: return String(localized: "把抖音、B 站、YouTube 这些视频链接贴到左边的框里，吧唧录音库会下载声音、转成文字稿，再整理成纪要。")
         case .project: return String(localized: "在任意一条录音上右键「移到项目」，或者在「全部录音」里点「选择」，一次放好几条进来。")
         case .tag: return String(localized: "在录音详情的标题下面点「＋ 标签」，就能给它加上。")
         default: return String(localized: "整理过的录音会自动归到对应的场景。")
@@ -2524,7 +2524,7 @@ struct DeviceView: View {
                 switch store.link {
                 case .ready: connected
                 case .off: ContentUnavailableView("蓝牙没打开", systemImage: "antenna.radiowaves.left.and.right.slash", description: Text("请在菜单栏或系统设置里打开蓝牙。"))
-                case .unauthorized: ContentUnavailableView("没有蓝牙权限", systemImage: "lock", description: Text("请到 系统设置 → 隐私与安全性 → 蓝牙 里允许「豆仓」。"))
+                case .unauthorized: ContentUnavailableView("没有蓝牙权限", systemImage: "lock", description: Text("请到 系统设置 → 隐私与安全性 → 蓝牙 里允许「吧唧录音库」。"))
                 case .connecting: connecting
                 case .idle, .scanning: scanner
                 }
@@ -2984,7 +2984,7 @@ final class ClipboardWatch {
     @ObservationIgnored private var lastChange = NSPasteboard.general.changeCount
     @ObservationIgnored private var asked: Set<String> = []
 
-    /// 豆仓回到前台、或者每隔几秒在前台时看一眼。只在剪贴板变了的时候才读。
+    /// 吧唧录音库回到前台、或者每隔几秒在前台时看一眼。只在剪贴板变了的时候才读。
     func check(_ store: BeanStore) {
         guard store.settings.watchClipboard else { offer = nil; return }
         let pb = NSPasteboard.general

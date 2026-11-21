@@ -5,7 +5,7 @@ import SwiftUI
 /// 刘海动画（分镜 design/ui/ui_notch_anim.png）：
 /// - 探头：开始录音时，刘海往下长出一个黑色小兜，小豆从刘海后面弹出来探个头，两边的计时和声波亮起来，两秒多后缩回去，只留耳朵。
 /// - 打印：录完时刘海像热敏打印机的出纸口，「滋——」一格一格吐出一截胶片（这次录音的声波、时长、时间），
-///   一把小剪刀「咔嚓」剪断，胶片转着飘下去，旁边冒一句「已存进豆仓」。
+///   一把小剪刀「咔嚓」剪断，胶片转着飘下去，旁边冒一句「已存进吧唧录音库」。
 /// 整段动画按「开始后过了几秒」逐帧算出来，不靠一串 withAnimation：时间可以定住（调试时定格中间帧），也不会被别的状态打断成半截。
 extension NotchPanel {
     enum Show: Equatable {
@@ -27,7 +27,7 @@ extension NotchPanel {
         var wave: [Float]
     }
 
-    /// 调试用：`defaults write com.andyhu.beanpod NotchShowFreezeAt 0.6` 把动画定在第 0.6 秒，删掉这个值恢复
+    /// 调试用：`defaults write com.ffan008.badgepod NotchShowFreezeAt 0.6` 把动画定在第 0.6 秒，删掉这个值恢复
     static var freezeAt: Double? {
         let v = UserDefaults.standard.double(forKey: "NotchShowFreezeAt")
         return v > 0 ? v : nil
@@ -205,7 +205,7 @@ struct NotchShowView: View {
         let out = Ease.clamp((t - 3.2) / 0.3)
         return HStack(spacing: 5) {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(rose)
-            Text("已存进豆仓").foregroundStyle(.black.opacity(0.82))
+            Text("已存进吧唧录音库").foregroundStyle(.black.opacity(0.82))
         }
         .font(.system(size: 12, weight: .semibold))
         .padding(.horizontal, 10).padding(.vertical, 6)

@@ -62,7 +62,7 @@ struct DeviceScreen: View {
             }
         }
         Button("断开连接", role: .destructive) { store.disconnect() }.padding(.top, 4)
-        Text("录音豆同一时间只让一台设备连。手机连着的时候，Mac 上的豆仓搜不到它，反过来也一样。")
+        Text("录音豆同一时间只让一台设备连。手机连着的时候，Mac 上的吧唧录音库搜不到它，反过来也一样。")
             .font(.footnote).foregroundStyle(.tertiary).multilineTextAlignment(.center)
     }
 
@@ -99,7 +99,7 @@ struct DeviceScreen: View {
     private var hint: String {
         switch store.link {
         case .off: "手机的蓝牙没有打开，或者这台设备没有蓝牙。"
-        case .unauthorized: "豆仓没有蓝牙权限。到「设置 → 豆仓」里把蓝牙打开。"
+        case .unauthorized: "吧唧录音库没有蓝牙权限。到「设置 → 吧唧录音库」里把蓝牙打开。"
         case .scanning: "正在找附近的录音豆…"
         case .connecting: store.waitingForKnownDevice ? "正在等上次那颗录音豆出现…" : "正在连接…"
         default: "把录音豆从充电盒里拿出来，放在手机旁边。"

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 小豆的样子跟着豆仓的状态和录音豆的电量走。
+/// 小豆的样子跟着吧唧录音库的状态和录音豆的电量走。
 enum MascotMood: Equatable {
     case sleeping    // 录音豆没连上
     case idle        // 待命

@@ -1,9 +1,9 @@
 import SceneKit
 import SwiftUI
 
-/// 小豆：豆仓的 3D 形象，一只脖子上挂着耳机的仓鼠。
+/// 小豆：吧唧录音库的 3D 形象，一只脖子上挂着耳机的仓鼠。
 /// 模型由 Tripo 生成，骨骼和表情贴图由 design/ip/tools/build.py 生成。
-/// 它的样子跟着豆仓的状态和录音豆的电量走，点它一下会蹦一蹦。
+/// 它的样子跟着吧唧录音库的状态和录音豆的电量走，点它一下会蹦一蹦。
 struct Mascot3DView: NSViewRepresentable {
     var mood: MascotMood
     var power: MascotPower = .unknown

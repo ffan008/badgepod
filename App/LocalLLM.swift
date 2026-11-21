@@ -1,6 +1,6 @@
 import Foundation
 
-/// 豆仓自带的本机分析模型：和转写一样，用 llama-server 跑一个 GGUF 模型，只监听本机。
+/// 吧唧录音库自带的本机分析模型：和转写一样，用 llama-server 跑一个 GGUF 模型，只监听本机。
 /// 用它整理纪要时，文字稿不出这台电脑。
 actor LocalLLM {
     static let shared = LocalLLM()
@@ -12,7 +12,7 @@ actor LocalLLM {
 
     nonisolated static var folder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeanPod/Models/qwen3-4b", isDirectory: true)
+            .appendingPathComponent("BadgePod/Models/qwen3-4b", isDirectory: true)
     }
 
     /// 这个文件夹里随便放一个 GGUF 格式的对话模型就行，不要求文件名。
@@ -42,7 +42,7 @@ actor LocalLLM {
         port = Int.random(in: 39901...39990)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // 外面套一层 sh 盯着豆仓：豆仓退了它也退。--reasoning-budget 0 关掉模型的「先思考再回答」，整理纪要用不上，还慢。
+        // 外面套一层 sh 盯着吧唧录音库：吧唧录音库退了它也退。--reasoning-budget 0 关掉模型的「先思考再回答」，整理纪要用不上，还慢。
         p.arguments = ["-c", #"parent=$1; shift; "$@" & child=$!; while kill -0 "$parent" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 1; done; kill "$child" 2>/dev/null"#,
                        "beanpod-llm", String(ProcessInfo.processInfo.processIdentifier), server.path,
                        "-m", model.path, "--host", "127.0.0.1", "--port", String(port),

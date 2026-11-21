@@ -28,7 +28,7 @@ nonisolated struct LLMConfig: Sendable {
     var baseURL: String
     var model: String
     var key: String
-    /// 豆仓自己起的本机模型。
+    /// 吧唧录音库自己起的本机模型。
     var builtIn = false
 }
 

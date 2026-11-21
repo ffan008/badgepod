@@ -1,7 +1,7 @@
 name: BeanPod
 options:
   developmentLanguage: zh-Hans
-  bundleIdPrefix: com.andyhu
+  bundleIdPrefix: com.ffan008
   deploymentTarget:
     macOS: "26.0"
     iOS: "18.0"
@@ -39,7 +39,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: 豆仓
+        CFBundleDisplayName: 吧唧录音库
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleIconName: AppIcon
@@ -52,7 +52,7 @@ targets:
         NSSpeechRecognitionUsageDescription: 需要语音识别来把录音转成文字，全部在本机完成。
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.andyhu.beanpod
+        PRODUCT_BUNDLE_IDENTIFIER: com.ffan008.badgepod
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: NO
@@ -66,7 +66,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: beanpod
-        PRODUCT_BUNDLE_IDENTIFIER: com.andyhu.beanpod.cli
+        PRODUCT_BUNDLE_IDENTIFIER: com.ffan008.badgepod.cli
         SWIFT_VERSION: "5.0"
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
         CODE_SIGN_STYLE: Automatic
@@ -82,7 +82,7 @@ targets:
     info:
       path: Mobile/Info.plist
       properties:
-        CFBundleDisplayName: 豆仓
+        CFBundleDisplayName: 吧唧录音库
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
         CFBundleAllowMixedLocalizations: true
@@ -94,7 +94,7 @@ targets:
         NSSpeechRecognitionUsageDescription: 没有配置云端转写时，用系统的语音识别把录音转成文字。
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.andyhu.beanpod.mobile
+        PRODUCT_BUNDLE_IDENTIFIER: com.ffan008.badgepod.mobile
         PRODUCT_NAME: BeanPod
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO

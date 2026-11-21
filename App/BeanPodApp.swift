@@ -13,7 +13,7 @@ struct BeanPodApp: App {
     @Environment(\.openWindow) private var openWindow
 
     var body: some SwiftUI.Scene {
-        Window("豆仓", id: "main") {
+        Window("吧唧录音库", id: "main") {
             RootView()
                 .environment(store).environment(nav).environment(dictation).environment(connector).environment(maker).environment(renoise).environment(clipboard)
                 .task { dictation.attach(store) }
@@ -168,7 +168,7 @@ struct BeanPodApp: App {
         }
         .defaultSize(width: 720, height: 480)
 
-        // 菜单栏常驻：不用切回豆仓窗口就能开始、停止录音
+        // 菜单栏常驻：不用切回吧唧录音库窗口就能开始、停止录音
         MenuBarExtra {
             MenuBarContent().environment(store)
         } label: {
@@ -211,7 +211,7 @@ struct MenuBarContent: View {
         }
         if !store.stages.isEmpty { Text("正在处理 \(store.stages.count) 条录音 · 还要\(BeanStore.spokenSpan(store.processingPlan().total, rough: true))") }
         Divider()
-        Button("打开豆仓") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
-        Button("退出豆仓") { NSApp.terminate(nil) }
+        Button("打开吧唧录音库") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+        Button("退出吧唧录音库") { NSApp.terminate(nil) }
     }
 }
