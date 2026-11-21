@@ -19,6 +19,10 @@ class CST9217 {
   // rstPin/intPin follow the board wiring (TP_RST=2, TP_INT=11).
   bool begin(TwoWire &wire = Wire, int rstPin = 2, int intPin = 11) {
     wire_ = &wire;
+    // Bound every I2C transaction on the shared bus: a wedged slave
+    // must never hang begin()/poll() forever (v1.2.1 audit — the reset
+    // delays below are already bounded, and INT is never waited on).
+    wire_->setTimeOut(50);
     pinMode(intPin, INPUT);
     pinMode(rstPin, OUTPUT);
     digitalWrite(rstPin, LOW);

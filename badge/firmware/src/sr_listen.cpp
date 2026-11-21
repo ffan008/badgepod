@@ -66,12 +66,23 @@ bool srListenInit() {
     Serial.println("SR: esp_srmodel_init('model') failed (partition missing/empty?)");
     return false;
   }
+  // Sanity-check the parsed header before trusting it: a corrupt or
+  // mismatched srmodels.bin must degrade to "no listen", never crash.
+  if (g_models->num < 1 || g_models->num > 32 || !g_models->model_name) {
+    Serial.printf("SR: implausible model list (num=%d), giving up\n", g_models->num);
+    return false;
+  }
   Serial.printf("SR: %d model(s) in 'model' partition:", g_models->num);
-  for (int i = 0; i < g_models->num; i++) Serial.printf(" %s", g_models->model_name[i]);
+  for (int i = 0; i < g_models->num; i++)
+    Serial.printf(" %s", g_models->model_name[i] ? g_models->model_name[i] : "(null)");
   Serial.println();
   g_mnName = esp_srmodel_filter(g_models, ESP_MN_PREFIX, ESP_MN_CHINESE);
   if (!g_mnName) {
     Serial.println("SR: no Chinese MultiNet model found");
+    return false;
+  }
+  if (esp_srmodel_exists(g_models, g_mnName) < 0) {
+    Serial.println("SR: filtered model not present in model list");
     return false;
   }
   Serial.printf("SR: MultiNet model = %s\n", g_mnName);
@@ -111,9 +122,21 @@ static int ringFramesAvailable() {
 static void feedTask(void *arg) {
   (void)arg;
   g_tasksAlive++;
+  if (!g_afeHandle || !g_afeData) {
+    Serial.println("SR feed task: AFE not ready, exiting");
+    g_tasksAlive--;
+    g_feedTask = nullptr;
+    vTaskDelete(nullptr);
+  }
   const int chunkFrames = g_afeHandle->get_feed_chunksize(g_afeData);
   const int channels = g_afeHandle->get_channel_num(g_afeData);
   int16_t *buf = (int16_t *)malloc(chunkFrames * channels * sizeof(int16_t));
+  if (!buf) {
+    Serial.println("SR feed task: buffer alloc failed, exiting");
+    g_tasksAlive--;
+    g_feedTask = nullptr;
+    vTaskDelete(nullptr);
+  }
   Serial.printf("SR feed task: chunk=%d frames x %d ch\n", chunkFrames, channels);
   while (!g_stopReq) {
     if (ringFramesAvailable() < chunkFrames) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
@@ -138,8 +161,20 @@ static void feedTask(void *arg) {
 static void fetchTask(void *arg) {
   (void)arg;
   g_tasksAlive++;
+  if (!g_afeHandle || !g_afeData || !g_mnHandle || !g_mnData) {
+    Serial.println("SR fetch task: AFE/MultiNet not ready, exiting");
+    g_tasksAlive--;
+    g_fetchTask = nullptr;
+    vTaskDelete(nullptr);
+  }
   const int mnChunk = g_mnHandle->get_samp_chunksize(g_mnData);
   int16_t *mnBuf = (int16_t *)malloc(mnChunk * sizeof(int16_t));
+  if (!mnBuf) {
+    Serial.println("SR fetch task: buffer alloc failed, exiting");
+    g_tasksAlive--;
+    g_fetchTask = nullptr;
+    vTaskDelete(nullptr);
+  }
   int mnFill = 0;
   Serial.printf("SR fetch task: MN chunk=%d samples\n", mnChunk);
   while (!g_stopReq) {
@@ -207,8 +242,10 @@ bool srListenStart() {
     Serial.println("SR: esp_mn_commands_alloc failed");
     goto fail;
   }
-  for (size_t i = 0; i < sizeof(kPhrases) / sizeof(kPhrases[0]); i++)
-    esp_mn_commands_add(kPhrases[i].id, kPhrases[i].text);
+  for (size_t i = 0; i < sizeof(kPhrases) / sizeof(kPhrases[0]); i++) {
+    if (esp_mn_commands_add(kPhrases[i].id, kPhrases[i].text) != ESP_OK)
+      Serial.printf("SR: commands_add failed for id=%d\n", kPhrases[i].id);
+  }
   {
     esp_mn_error_t *err = esp_mn_commands_update();
     if (err) {
@@ -224,8 +261,19 @@ bool srListenStart() {
   g_ringHead = g_ringTail = 0;
   g_status.speech = false;
   g_status.pendingCommand = 0;
-  xTaskCreatePinnedToCore(feedTask, "sr_feed", 4096, nullptr, 5, &g_feedTask, 0);
-  xTaskCreatePinnedToCore(fetchTask, "sr_fetch", 8192, nullptr, 5, &g_fetchTask, 0);
+  if (xTaskCreatePinnedToCore(feedTask, "sr_feed", 4096, nullptr, 5, &g_feedTask, 0) != pdPASS) {
+    Serial.println("SR: feed task create failed");
+    goto fail;
+  }
+  if (xTaskCreatePinnedToCore(fetchTask, "sr_fetch", 8192, nullptr, 5, &g_fetchTask, 0) != pdPASS) {
+    Serial.println("SR: fetch task create failed");
+    // Stop the feed task before destroying the handles it uses.
+    g_stopReq = true;
+    uint32_t t0 = millis();
+    while (g_tasksAlive > 0 && millis() - t0 < 4000) vTaskDelay(pdMS_TO_TICKS(20));
+    esp_mn_commands_free();
+    goto fail;
+  }
   g_status.running = true;
   Serial.println("SR listen started");
   return true;

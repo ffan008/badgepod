@@ -27,6 +27,17 @@
 //    While a menu page is open, listen-driven face switching is paused.
 //  - Partition layout: app0 8 MB, model 4 MB, storage ~20 MB, so the
 //    recording cap drops to ~1.4 h.
+// v1.2.1 changes (black-screen fix; no serial log was captured from the
+//    faulty unit, so this is defense in depth from a code audit):
+//  - Display-first boot: panel init + first frame happen before touch,
+//    codec and SR — nothing that can hang or crash precedes the first
+//    visible frame (on AMOLED, black fill looks exactly like "dead").
+//  - SR init/start moved out of setup() into a low-priority one-shot
+//    task fired ~3 s after boot; every step is NULL/return-checked.
+//  - Boot-loop guard: an RTC-memory counter increments each boot and
+//    clears after 30 s of stable running; at 3 consecutive unstable
+//    boots SR is skipped for that boot, so even a hard crash inside
+//    the listen engine can never black-screen the badge permanently.
 //
 // Pin map (from Waveshare board_config):
 //  LCD QSPI: CS12 SCLK38 SDIO 4/5/6/7, RST1 | I2C: SDA15 SCL14
@@ -38,6 +49,7 @@
 #include <WiFiUdp.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include "esp_attr.h"  // RTC_NOINIT_ATTR (boot-loop guard, v1.2.1)
 #include <driver/i2s.h>
 #include <Arduino_GFX_Library.h>
 #include <JPEGDEC.h>
@@ -130,6 +142,46 @@ static bool g_apMode = false;
 static WebServer *g_server = nullptr;
 static Preferences g_prefs;
 static String g_ssid = "";
+
+// ---------------- Boot-loop guard + deferred SR start (v1.2.1) -------
+// RTC memory survives panic / software resets (not power loss), which
+// makes it the right place for a consecutive-unstable-boot counter:
+// setup() increments it, loop() clears it after 30 s of stable
+// running, and at >= 3 the listen engine is skipped for that boot.
+#define BOOT_MAGIC 0xB00712A1u
+RTC_NOINIT_ATTR static uint32_t g_bootMagic;
+RTC_NOINIT_ATTR static uint32_t g_bootCount;
+static bool g_srBootSkip = false;    // set in setup() when count >= 3
+static bool g_bootStableDone = false;
+static bool g_srBootTried = false;
+
+static void bootStableTick() {
+  if (g_bootStableDone || millis() < 30000) return;
+  g_bootStableDone = true;
+  if (g_bootCount != 0) {
+    g_bootCount = 0;
+    Serial.println("boot stable 30 s: crash counter cleared");
+  }
+}
+
+// One-shot starter for the listen engine. Runs ~3 s after boot, long
+// after the first frame is on screen, at the lowest priority.
+static void srBootTask(void *arg) {
+  (void)arg;
+  // Never fight the recorder for the audio path during start-up.
+  while (g_recording) vTaskDelay(pdMS_TO_TICKS(250));
+  if (srListenInit()) srListenStart();
+  vTaskDelete(nullptr);
+}
+
+static void srBootTrigger() {
+  if (g_srBootTried || millis() < 3000) return;
+  g_srBootTried = true;
+  if (g_apMode) { Serial.println("SR: skipped in AP mode"); return; }
+  if (g_srBootSkip) { Serial.println("SR: skipped this boot (crash-loop guard)"); return; }
+  if (xTaskCreatePinnedToCore(srBootTask, "sr_boot", 8192, nullptr, 1, nullptr, 0) != pdPASS)
+    Serial.println("SR: boot task create failed, listen unavailable this boot");
+}
 
 // ---------------- Stream FIFO (PSRAM chunks) ----------------
 struct Chunk { uint8_t *data; size_t len; Chunk *next; };
@@ -989,7 +1041,15 @@ static bool loadClip(const char *path) {
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("Muse badge v1.2");
+  Serial.println("Muse badge v1.2.1");
+
+  // Boot-loop guard: count this boot before anything risky runs.
+  if (g_bootMagic != BOOT_MAGIC) { g_bootMagic = BOOT_MAGIC; g_bootCount = 0; }
+  g_bootCount++;
+  g_srBootSkip = g_bootCount >= 3;
+  Serial.printf("boot count=%u%s\n", (unsigned)g_bootCount,
+                g_srBootSkip ? " -> SR disabled this boot (crash-loop guard)" : "");
+
   Wire.begin(IIC_SDA, IIC_SCL);
   pinMode(PIN_BOOT, INPUT_PULLUP);
   g_fifoMutex = xSemaphoreCreateMutex();
@@ -998,9 +1058,9 @@ void setup() {
   g_pmuOk = pmu.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
   Serial.printf("PMU %s\n", g_pmuOk ? "ok" : "not found");
 
-  g_touchOk = touch.begin(Wire, TP_RST, TP_INT);
-  Serial.printf("Touch CST9217 %s\n", g_touchOk ? "ok" : "not responding");
-
+  // Display FIRST (v1.2.1): panel up before touch/codec/SR. On AMOLED
+  // a black fill is indistinguishable from a dead panel, so nothing
+  // that can hang or crash may precede the first visible frame.
   if (!gfx->begin()) Serial.println("gfx begin failed");
   gfx->setBrightness(g_brightness);
   gfx->fillScreen(RGB565_BLACK);
@@ -1012,6 +1072,23 @@ void setup() {
   }
 
   wifiSetup();
+
+  // First frame out NOW (v1.2.1 display-first): the setup screen in AP
+  // mode, otherwise the idle animation + splash. Everything below this
+  // point (touch probe, codec, tasks, SR) may fail freely — the user
+  // already sees a live badge.
+  jpeg.setPixelType(RGB565_BIG_ENDIAN);
+  if (g_apMode) {
+    showSetupScreen();
+  } else {
+    if (loadClip(kStates[g_state].file)) g_displayed = g_state;
+    showSplash(kStates[g_state].label);
+  }
+
+  // Touch after display: a hung probe can no longer black the panel.
+  g_touchOk = touch.begin(Wire, TP_RST, TP_INT);
+  Serial.printf("Touch CST9217 %s\n", g_touchOk ? "ok" : "not responding");
+
   xTaskCreatePinnedToCore(streamerTask, "streamer", 8192, nullptr, 1, nullptr, 0);
 
   if (!codec.begin(Wire)) Serial.println("ES7210 not found");
@@ -1039,17 +1116,11 @@ void setup() {
   i2s_set_pin(I2S_NUM_1, &pins);
   i2s_stop(I2S_NUM_1);
 
-  // Listen engine: load models once; start unless provisioning Wi-Fi.
-  if (srListenInit() && !g_apMode) srListenStart();
+  // v1.2.1: the listen engine is NOT started here anymore. loop()
+  // fires srBootTrigger() ~3 s after boot, which runs srListenInit()
+  // + srListenStart() in a low-priority one-shot task — long after
+  // the first frame is on screen, and subject to the boot-loop guard.
   xTaskCreatePinnedToCore(audioHubTask, "audiohub", 8192, nullptr, 4, nullptr, 0);
-
-  jpeg.setPixelType(RGB565_BIG_ENDIAN);
-  if (g_apMode) {
-    showSetupScreen();
-  } else {
-    if (loadClip(kStates[g_state].file)) g_displayed = g_state;
-    showSplash(kStates[g_state].label);
-  }
 }
 
 // ---------------- Animation loop (UI_ANIM) ----------------
@@ -1090,6 +1161,8 @@ static void animLoop() {
 
 // ---------------- Loop ----------------
 void loop() {
+  bootStableTick();
+  srBootTrigger();
   if (g_recording) { recordUiLoop(); return; }
 
   if (g_apMode) {

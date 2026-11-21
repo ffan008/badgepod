@@ -32,8 +32,10 @@ struct SrStatus {
 //   5 = waiting      "等一下"
 //   6 = idle         "休息一下"
 
-// One-time model load from the "model" partition. Safe to call once at
-// boot; the model list (flash mmap) is kept for the process lifetime.
+// One-time model load from the "model" partition. Since v1.2.1 this is
+// called from a deferred low-priority boot task (~3 s after boot, once
+// the first frame is on screen), never from setup() directly, so a
+// failure here can only cost the listen feature, never the display.
 bool srListenInit();
 
 // Create AFE + MultiNet + feed/fetch tasks. Returns false if the engine
