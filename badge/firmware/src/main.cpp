@@ -515,8 +515,24 @@ static int utf8Next(const char *s, uint32_t &cp) {
   return 1;
 }
 
-static void drawCnText(int x, int y, const char *s, uint16_t color) {
-  int cx = x;
+static int cnTextWidth(const char *s) {
+  int n = 0;
+  while (*s) { uint32_t cp; s += utf8Next(s, cp); n++; }
+  return n > 0 ? n * 30 - 2 : 0;
+}
+
+// Render the whole string into an RGB565 strip and blit it in one block.
+// Per-pixel drawPixel() writes never reach this QSPI CO5300 panel (single-
+// pixel windows are dropped), which left every UI label invisible while
+// fills and bitmap blits worked. draw16bitRGBBitmap is the same primitive
+// the animation path uses and is proven on this panel.
+static void drawCnText(int x, int y, const char *s, uint16_t color, uint16_t bg) {
+  int w = cnTextWidth(s);
+  if (w <= 0) return;
+  static uint16_t strip[28 * 450];  // up to 15 glyphs wide
+  if (w > 450) w = 450;
+  for (int i = 0; i < w * 28; i++) strip[i] = bg;
+  int cx = 0;
   while (*s) {
     uint32_t cp;
     s += utf8Next(s, cp);
@@ -525,19 +541,16 @@ static void drawCnText(int x, int y, const char *s, uint16_t color) {
       for (int row = 0; row < 28; row++) {
         for (int col = 0; col < 28; col++) {
           int bit = row * 28 + col;
-          if ((g->bmp[bit >> 3] >> (7 - (bit & 7))) & 1)
-            gfx->drawPixel(cx + col, y + row, color);
+          if ((g->bmp[bit >> 3] >> (7 - (bit & 7))) & 1) {
+            int px = cx + col;
+            if (px < w) strip[row * w + px] = color;
+          }
         }
       }
     }
     cx += 30;  // 28 px cell + 2 px tracking
   }
-}
-
-static int cnTextWidth(const char *s) {
-  int n = 0;
-  while (*s) { uint32_t cp; s += utf8Next(s, cp); n++; }
-  return n > 0 ? n * 30 - 2 : 0;
+  gfx->draw16bitRGBBitmap(x, y, strip, w, 28);
 }
 
 // ---------------- UI helpers ----------------
@@ -611,7 +624,7 @@ static void showRecScreen(uint32_t elapsedSec) {
   gfx->fillCircle(STOP_CX, STOP_CY, STOP_R, gfx->color565(140, 32, 32));
   gfx->drawCircle(STOP_CX, STOP_CY, STOP_R, RGB565_WHITE);
   gfx->drawCircle(STOP_CX, STOP_CY, STOP_R - 1, RGB565_WHITE);
-  drawCnText(STOP_CX - cnTextWidth("停止") / 2, STOP_CY - 14, "停止", RGB565_WHITE);
+  drawCnText(STOP_CX - cnTextWidth("停止") / 2, STOP_CY - 14, "停止", RGB565_WHITE, gfx->color565(140, 32, 32));
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(110, 424);
@@ -634,7 +647,7 @@ static void drawButton(const Btn &b, bool accent = false) {
   gfx->fillRoundRect(b.x, b.y, b.w, b.h, 16, fill);
   gfx->drawRoundRect(b.x, b.y, b.w, b.h, 16, gfx->color565(80, 100, 130));
   drawCnText(b.x + (b.w - cnTextWidth(b.label)) / 2,
-             b.y + (b.h - 28) / 2, b.label, RGB565_WHITE);
+             b.y + (b.h - 28) / 2, b.label, RGB565_WHITE, fill);
 }
 
 // MENU: 2x2 grid — 录音 / 表情 / 信息 / 返回
@@ -653,6 +666,10 @@ static const Btn kInfoReprov{33, 378, 400, 62, "重新配网"};
 static void drawMenuPage() {
   gfx->fillScreen(gfx->color565(10, 12, 18));
   for (int i = 0; i < 4; i++) drawButton(kMenuBtns[i]);
+  gfx->setTextColor(gfx->color565(90, 100, 120));
+  gfx->setTextSize(2);
+  gfx->setCursor(197, 432);
+  gfx->print("v1.2.3");
 }
 
 static void drawFacesPage() {
@@ -674,14 +691,14 @@ static void drawInfoPage() {
   int b = batteryPct();
   if (b >= 0) snprintf(buf, sizeof(buf), "电量 %d%%", b);
   else snprintf(buf, sizeof(buf), "电量 未知");
-  drawCnText(x, 34, buf, RGB565_WHITE);
+  drawCnText(x, 34, buf, RGB565_WHITE, gfx->color565(10, 12, 18));
   size_t total = LittleFS.totalBytes(), used = LittleFS.usedBytes();
   int freePct = total ? (int)((total - used) * 100 / total) : 0;
   snprintf(buf, sizeof(buf), "存储剩余 %d%%", freePct);
-  drawCnText(x, 84, buf, RGB565_WHITE);
+  drawCnText(x, 84, buf, RGB565_WHITE, gfx->color565(10, 12, 18));
   double recHours = total > used ? (double)(total - used) / (OPUS_BITRATE / 8) / 3600.0 : 0;
   snprintf(buf, sizeof(buf), "可录时长 %.1f小时", recHours);
-  drawCnText(x, 134, buf, RGB565_WHITE);
+  drawCnText(x, 134, buf, RGB565_WHITE, gfx->color565(10, 12, 18));
   if (WiFi.status() == WL_CONNECTED) {
     gfx->setTextColor(RGB565_WHITE);
     gfx->setTextSize(2);
@@ -690,7 +707,7 @@ static void drawInfoPage() {
     gfx->setCursor(x, 218);
     gfx->printf("IP: %s", WiFi.localIP().toString().c_str());
   } else {
-    drawCnText(x, 190, "未连接", RGB565_WHITE);
+    drawCnText(x, 190, "未连接", RGB565_WHITE, gfx->color565(10, 12, 18));
   }
   drawButton(kInfoBriMinus);
   drawButton(kInfoBriPlus);
@@ -959,7 +976,7 @@ static void handlePageTap(int tx, int ty) {
       g_prefs.remove("ssid");
       g_prefs.remove("pass");
       gfx->fillScreen(RGB565_BLACK);
-      drawCnText(233 - cnTextWidth("重新配网") / 2, 219, "重新配网", RGB565_WHITE);
+      drawCnText(233 - cnTextWidth("重新配网") / 2, 219, "重新配网", RGB565_WHITE, RGB565_BLACK);
       delay(800);
       ESP.restart();
     }
