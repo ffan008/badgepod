@@ -1,21 +1,36 @@
-// Muse badge firmware v1.1 — Waveshare ESP32-S3-Touch-AMOLED-1.75C
+// Muse badge firmware v1.2 — Waveshare ESP32-S3-Touch-AMOLED-1.75C
 //
 // v1: mascot MJPEG animations on the 466x466 AMOLED, BOOT short press =
 //     next state, BOOT long press = record (WAV), AXP2101 battery %.
 // v1.1 changes:
 //  - Recording is Opus (16 kHz mono, 16 kbps) in an Ogg container (.ogg),
-//    stored locally on LittleFS as the master copy (up to ~2 h).
+//    stored locally on LittleFS as the master copy.
 //  - Record-and-stream: while recording, the Ogg stream is also pushed
 //    over Wi-Fi (TCP) to a receiver on the Mac (UDP broadcast discovery).
-//    Local copy is always complete; the stream is a live copy.
-//  - Screen turns off 3 s into a recording (BOOT short press = peek 3 s,
-//    long press = stop) to save power and stay discreet.
-//  - Wi-Fi provisioning: first boot (or BOOT held at power-on) opens the
-//    "MuseBadge-Setup" AP with a captive form; credentials live in NVS.
+//  - Screen turns off 3 s into a recording (BOOT short press = peek 3 s).
+//  - Wi-Fi provisioning via the "MuseBadge-Setup" AP; credentials in NVS.
+// v1.2 changes:
+//  - AudioHub task owns the I2S/ES7210 path. Incoming stereo audio feeds
+//    either the Opus recorder (RECORD) or the local listen engine
+//    (LISTEN) — never both.
+//  - LISTEN (standby, fully on-device): ESP-SR AFE + Chinese MultiNet7
+//    command spotting from a dedicated "model" flash partition.
+//    Expression state machine, priority high -> low:
+//      recording > voice command (hold 6 s) > loud burst (celebration
+//      flash 2 s) > someone speaking (AFE VAD -> waiting-helper,
+//      until 2 s after speech ends) > base state (BOOT / face page).
+//    While recording, the listen engine is suspended (AudioHub simply
+//    stops feeding it; AFE/MultiNet stay allocated in PSRAM).
+//  - Touch UI (CST9217): tap the animation for a menu (record / faces /
+//    info / back). The record screen gains a big stop button; the info
+//    page shows battery, storage, brightness +/-, re-provisioning.
+//    While a menu page is open, listen-driven face switching is paused.
+//  - Partition layout: app0 8 MB, model 4 MB, storage ~20 MB, so the
+//    recording cap drops to ~1.4 h.
 //
 // Pin map (from Waveshare board_config):
 //  LCD QSPI: CS12 SCLK38 SDIO 4/5/6/7, RST1 | I2C: SDA15 SCL14
-//  ES7210: BCLK9 LRCK45 DIN10 MCLK16 | BOOT button: GPIO0
+//  ES7210: BCLK9 LRCK45 DIN10 MCLK16 | Touch: INT11 RST2 | BOOT: GPIO0
 #include <Arduino.h>
 #include <Wire.h>
 #include <LittleFS.h>
@@ -28,7 +43,11 @@
 #include <JPEGDEC.h>
 #include <XPowersLib.h>
 #include <opus.h>
+#include <math.h>
 #include "es7210_min.h"
+#include "cst9217_min.h"
+#include "cn_font.h"
+#include "sr_listen.h"
 
 // ---------------- Pins ----------------
 static const int LCD_CS = 12, LCD_SCLK = 38, LCD_RST = 1;
@@ -36,19 +55,22 @@ static const int LCD_D0 = 4, LCD_D1 = 5, LCD_D2 = 6, LCD_D3 = 7;
 static const int IIC_SDA = 15, IIC_SCL = 14;
 static const int PIN_BCLK = 9, PIN_LRCK = 45, PIN_DIN = 10, PIN_MCLK = 16;
 static const int PIN_BOOT = 0;
+static const int TP_INT = 11, TP_RST = 2;
 
 // ---------------- Avatar states ----------------
-struct StateDef { const char *file; const char *label; };
+struct StateDef { const char *file; const char *label; const char *cn; };
 static const StateDef kStates[] = {
-  {"/idle.avi",           "IDLE"},
-  {"/working.avi",        "WORKING"},
-  {"/making.avi",         "MAKING"},
-  {"/connecting.avi",     "CONNECTING"},
-  {"/celebration.avi",    "CELEBRATE"},
-  {"/waiting-helper.avi", "WAITING"},
+  {"/idle.avi",           "IDLE",      "待机"},
+  {"/working.avi",        "WORKING",   "工作"},
+  {"/making.avi",         "MAKING",    "做东西"},
+  {"/connecting.avi",     "CONNECTING","连接中"},
+  {"/celebration.avi",    "CELEBRATE", "庆祝"},
+  {"/waiting-helper.avi", "WAITING",   "等帮手"},
 };
 static const int kNumStates = sizeof(kStates) / sizeof(kStates[0]);
-static int g_state = 0;
+static const int FACE_IDLE = 0, FACE_WORKING = 1, FACE_MAKING = 2,
+                 FACE_CONNECTING = 3, FACE_CELEB = 4, FACE_WAITING = 5;
+static int g_state = 0;  // base state (BOOT short press / face page)
 
 // ---------------- Globals ----------------
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3);
@@ -56,7 +78,10 @@ Arduino_CO5300 *gfx = new Arduino_CO5300(bus, LCD_RST, 0, 466, 466, 6, 0, 0, 0);
 JPEGDEC jpeg;
 XPowersAXP2101 pmu;
 ES7210 codec;
+CST9217 touch;
 bool g_pmuOk = false;
+bool g_touchOk = false;
+static SemaphoreHandle_t g_wireMutex = nullptr;  // I2C shared: PMU/touch vs codec
 
 // Loaded clip in PSRAM
 static uint8_t *g_clip = nullptr;
@@ -64,15 +89,23 @@ static size_t g_clipLen = 0;
 static uint32_t g_frameOff[512];
 static uint32_t g_frameSize[512];
 static int g_frameCount = 0;
+static int g_displayed = -1;  // clip index currently loaded/shown
 
 // ---------------- Recording / streaming constants ----------------
 static const uint32_t REC_SAMPLE_RATE = 16000;
-static const uint32_t REC_MAX_SEC = 7200;          // 2 h at 16 kbps Opus
+static const uint32_t REC_MAX_SEC = 5040;          // ~1.4 h at 16 kbps Opus (v1.2: storage ~20 MB)
 static const uint32_t REC_MIN_FREE = 1536 * 1024;  // stop if LittleFS free < 1.5 MB
 static const int OPUS_FRAME = 320;                 // 20 ms @ 16 kHz
 static const int OPUS_BITRATE = 16000;
 static const uint16_t DISC_PORT = 47800;           // UDP discovery
 static const size_t FIFO_CAP = 1024 * 1024;        // stream backlog cap (PSRAM)
+
+// ---------------- Listen / expression constants ----------------
+static const float LOUD_RMS_THRESHOLD = 12000.0f;  // ~-9 dBFS RMS @30 dB mic gain (uncalibrated)
+static const uint32_t BURST_HOLD_MS = 2000;        // celebration flash length
+static const uint32_t BURST_COOLDOWN_MS = 4000;
+static const uint32_t COMMAND_HOLD_MS = 6000;      // command face hold
+static const uint32_t SPEECH_HOLD_MS = 2000;       // listening face lingers after speech
 
 static bool g_recording = false;
 static File g_recFile;
@@ -80,15 +113,23 @@ static char g_recName[32] = "";
 static uint32_t g_recStartMs = 0;
 static uint32_t g_sessionId = 0;
 static OpusEncoder *g_opus = nullptr;
+static volatile bool g_hubFeedingRec = false;  // AudioHub -> recorder active
 
 // Screen-off-while-recording state
 static bool g_screenOff = false;
 static uint32_t g_showUntilMs = 0;
+static uint8_t g_brightness = 200;
+
+// Expression state machine (display side)
+static int g_cmdFace = -1;
+static uint32_t g_cmdUntil = 0;
+static volatile uint32_t g_burstUntil = 0;  // written by AudioHub
 
 // Wi-Fi
 static bool g_apMode = false;
 static WebServer *g_server = nullptr;
 static Preferences g_prefs;
+static String g_ssid = "";
 
 // ---------------- Stream FIFO (PSRAM chunks) ----------------
 struct Chunk { uint8_t *data; size_t len; Chunk *next; };
@@ -351,6 +392,7 @@ static void wifiSetup() {
   }
   String ssid = g_prefs.getString("ssid", "");
   String pass = g_prefs.getString("pass", "");
+  g_ssid = ssid;
   if (ssid.length() > 0) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
@@ -393,15 +435,72 @@ static void wifiSetup() {
   }
 }
 
+// ---------------- Chinese subset font drawing ----------------
+// Glyphs: 28x28, 1bpp, continuous bitstream (bit = row*28 + col).
+static const CnGlyph *findGlyph(uint32_t cp) {
+  int lo = 0, hi = kCnFontCount - 1;
+  while (lo <= hi) {
+    int mid = (lo + hi) / 2;
+    if (kCnFont[mid].code == cp) return &kCnFont[mid];
+    if (kCnFont[mid].code < cp) lo = mid + 1; else hi = mid - 1;
+  }
+  return nullptr;
+}
+
+static int utf8Next(const char *s, uint32_t &cp) {
+  uint8_t c = (uint8_t)s[0];
+  if (c < 0x80) { cp = c; return 1; }
+  if ((c & 0xE0) == 0xC0 && s[1]) { cp = ((c & 0x1F) << 6) | (s[1] & 0x3F); return 2; }
+  if ((c & 0xF0) == 0xE0 && s[1] && s[2]) {
+    cp = ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+    return 3;
+  }
+  if ((c & 0xF8) == 0xF0 && s[1] && s[2] && s[3]) {
+    cp = ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+    return 4;
+  }
+  cp = '?';
+  return 1;
+}
+
+static void drawCnText(int x, int y, const char *s, uint16_t color) {
+  int cx = x;
+  while (*s) {
+    uint32_t cp;
+    s += utf8Next(s, cp);
+    const CnGlyph *g = findGlyph(cp);
+    if (g) {
+      for (int row = 0; row < 28; row++) {
+        for (int col = 0; col < 28; col++) {
+          int bit = row * 28 + col;
+          if ((g->bmp[bit >> 3] >> (7 - (bit & 7))) & 1)
+            gfx->drawPixel(cx + col, y + row, color);
+        }
+      }
+    }
+    cx += 30;  // 28 px cell + 2 px tracking
+  }
+}
+
+static int cnTextWidth(const char *s) {
+  int n = 0;
+  while (*s) { uint32_t cp; s += utf8Next(s, cp); n++; }
+  return n > 0 ? n * 30 - 2 : 0;
+}
+
 // ---------------- UI helpers ----------------
 static int batteryPct() {
-  if (!g_pmuOk || !pmu.isBatteryConnect()) return -1;
-  return pmu.getBatteryPercent();
+  if (!g_pmuOk) return -1;
+  xSemaphoreTake(g_wireMutex, portMAX_DELAY);
+  bool conn = pmu.isBatteryConnect();
+  int pct = conn ? pmu.getBatteryPercent() : -1;
+  xSemaphoreGive(g_wireMutex);
+  return pct;
 }
 
 static void screenOn() {
   if (!g_screenOff) return;
-  gfx->setBrightness(200);
+  gfx->setBrightness(g_brightness);
   g_screenOff = false;
 }
 
@@ -443,19 +542,141 @@ static void showSetupScreen() {
   gfx->print("Open 192.168.4.1");
 }
 
+// REC screen: red dot + elapsed + status + big touch stop button.
+static const int STOP_CX = 233, STOP_CY = 316, STOP_R = 58;
+static bool inStopButton(int x, int y) {
+  int dx = x - STOP_CX, dy = y - STOP_CY;
+  return dx * dx + dy * dy <= (STOP_R + 8) * (STOP_R + 8);
+}
+
 static void showRecScreen(uint32_t elapsedSec) {
   gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(233, 170, 46, RGB565_RED);
+  gfx->fillCircle(233, 108, 32, RGB565_RED);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setTextSize(5);
-  gfx->setCursor(150, 260);
+  gfx->setCursor(150, 168);
   gfx->printf("%lus", (unsigned long)elapsedSec);
-  gfx->setTextSize(3);
-  gfx->setCursor(110, 330);
-  gfx->print("REC - hold BOOT to stop");
+  gfx->fillCircle(STOP_CX, STOP_CY, STOP_R, gfx->color565(140, 32, 32));
+  gfx->drawCircle(STOP_CX, STOP_CY, STOP_R, RGB565_WHITE);
+  gfx->drawCircle(STOP_CX, STOP_CY, STOP_R - 1, RGB565_WHITE);
+  drawCnText(STOP_CX - cnTextWidth("停止") / 2, STOP_CY - 14, "停止", RGB565_WHITE);
   gfx->setTextSize(2);
-  gfx->setCursor(110, 370);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(110, 424);
   gfx->print(WiFi.status() == WL_CONNECTED && g_streamerConnected ? "streaming" : "local only");
+}
+
+// ---------------- Touch pages ----------------
+enum UiMode { UI_ANIM, UI_MENU, UI_FACES, UI_INFO };
+static UiMode g_ui = UI_ANIM;
+static uint32_t g_uiLastActMs = 0;
+static uint32_t g_infoRedrawMs = 0;
+static const uint32_t UI_TIMEOUT_MS = 6000;
+
+struct Btn { int x, y, w, h; const char *label; };
+static bool inBtn(const Btn &b, int x, int y) {
+  return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
+}
+static void drawButton(const Btn &b, bool accent = false) {
+  uint16_t fill = accent ? gfx->color565(24, 80, 96) : gfx->color565(30, 38, 54);
+  gfx->fillRoundRect(b.x, b.y, b.w, b.h, 16, fill);
+  gfx->drawRoundRect(b.x, b.y, b.w, b.h, 16, gfx->color565(80, 100, 130));
+  drawCnText(b.x + (b.w - cnTextWidth(b.label)) / 2,
+             b.y + (b.h - 28) / 2, b.label, RGB565_WHITE);
+}
+
+// MENU: 2x2 grid — 录音 / 表情 / 信息 / 返回
+static const Btn kMenuBtns[4] = {
+  {33, 88, 190, 150, "录音"}, {243, 88, 190, 150, "表情"},
+  {33, 262, 190, 150, "信息"}, {243, 262, 190, 150, "返回"},
+};
+// FACES: 6 states + 返回 (back to MENU)
+static Btn faceBtn(int i) { return Btn{63, 22 + i * 62, 340, 54, ""}; }
+// INFO buttons
+static const Btn kInfoBriMinus{33, 296, 120, 62, "亮度-"};
+static const Btn kInfoBriPlus{173, 296, 120, 62, "亮度+"};
+static const Btn kInfoBack{313, 296, 120, 62, "返回"};
+static const Btn kInfoReprov{33, 378, 400, 62, "重新配网"};
+
+static void drawMenuPage() {
+  gfx->fillScreen(gfx->color565(10, 12, 18));
+  for (int i = 0; i < 4; i++) drawButton(kMenuBtns[i]);
+}
+
+static void drawFacesPage() {
+  gfx->fillScreen(gfx->color565(10, 12, 18));
+  for (int i = 0; i < kNumStates; i++) {
+    Btn b = faceBtn(i);
+    b.label = kStates[i].cn;
+    drawButton(b, i == g_state);
+  }
+  Btn back = faceBtn(6);
+  back.label = "返回";
+  drawButton(back);
+}
+
+static void drawInfoPage() {
+  gfx->fillScreen(gfx->color565(10, 12, 18));
+  char buf[96];
+  int x = 43;
+  int b = batteryPct();
+  if (b >= 0) snprintf(buf, sizeof(buf), "电量 %d%%", b);
+  else snprintf(buf, sizeof(buf), "电量 未知");
+  drawCnText(x, 34, buf, RGB565_WHITE);
+  size_t total = LittleFS.totalBytes(), used = LittleFS.usedBytes();
+  int freePct = total ? (int)((total - used) * 100 / total) : 0;
+  snprintf(buf, sizeof(buf), "存储剩余 %d%%", freePct);
+  drawCnText(x, 84, buf, RGB565_WHITE);
+  double recHours = total > used ? (double)(total - used) / (OPUS_BITRATE / 8) / 3600.0 : 0;
+  snprintf(buf, sizeof(buf), "可录时长 %.1f小时", recHours);
+  drawCnText(x, 134, buf, RGB565_WHITE);
+  if (WiFi.status() == WL_CONNECTED) {
+    gfx->setTextColor(RGB565_WHITE);
+    gfx->setTextSize(2);
+    gfx->setCursor(x, 190);
+    gfx->printf("SSID: %s", g_ssid.c_str());
+    gfx->setCursor(x, 218);
+    gfx->printf("IP: %s", WiFi.localIP().toString().c_str());
+  } else {
+    drawCnText(x, 190, "未连接", RGB565_WHITE);
+  }
+  drawButton(kInfoBriMinus);
+  drawButton(kInfoBriPlus);
+  drawButton(kInfoBack);
+  drawButton(kInfoReprov);
+}
+
+static void drawCurrentPage() {
+  if (g_ui == UI_MENU) drawMenuPage();
+  else if (g_ui == UI_FACES) drawFacesPage();
+  else if (g_ui == UI_INFO) drawInfoPage();
+}
+
+static void enterPage(UiMode m) {
+  g_ui = m;
+  g_uiLastActMs = millis();
+  srStatus().pendingCommand = 0;  // don't let a stale command fire later
+  drawCurrentPage();
+}
+
+static void exitToAnim() {
+  g_ui = UI_ANIM;
+  srStatus().pendingCommand = 0;
+  g_displayed = -1;  // force clip reload (pages overwrote the frame)
+}
+
+// Tap = touch-down edge. Shared across loop paths; only one runs at a time.
+static bool pollTap(int &x, int &y) {
+  static bool wasDown = false;
+  if (!g_touchOk) return false;
+  xSemaphoreTake(g_wireMutex, portMAX_DELAY);
+  int tx = 0, ty = 0;
+  bool down = touch.poll(tx, ty);
+  xSemaphoreGive(g_wireMutex);
+  bool tap = false;
+  if (down && !wasDown) { x = tx; y = ty; tap = true; }
+  wasDown = down;
+  return tap;
 }
 
 // ---------------- Button ----------------
@@ -473,7 +694,83 @@ static int pollButton() {
   return 0;
 }
 
-// ---------------- Recording (Opus / Ogg) ----------------
+// ---------------- Recorder feed (called by AudioHub) ----------------
+static int16_t g_recFrame[OPUS_FRAME];
+static int g_recFill = 0;
+
+static void recorderFeed(const int16_t *stereo, int frames) {
+  if (!g_opus) return;
+  for (int i = 0; i < frames; i++) {
+    int32_t m = ((int32_t)stereo[2 * i] + stereo[2 * i + 1]) / 2;
+    g_recFrame[g_recFill++] = (int16_t)m;
+    if (g_recFill == OPUS_FRAME) {
+      uint8_t out[512];
+      int n = opus_encode(g_opus, g_recFrame, OPUS_FRAME, out, sizeof(out));
+      if (n > 0) g_writer.writePacket(out, (size_t)n);
+      g_recFill = 0;
+    }
+  }
+}
+
+// ---------------- AudioHub task (core 0) ----------------
+// Sole owner of the I2S read path. RECORD feeds the Opus recorder;
+// LISTEN feeds the SR engine and watches for loud bursts. The codec is
+// started/stopped on demand so the mic is off when neither wants audio.
+static void audioHubTask(void *arg) {
+  (void)arg;
+  static int16_t stereo[2048];  // 1024 stereo frames per read
+  bool audioOn = false;
+  float slowAvg = 0;
+  uint32_t lastBurst = 0;
+  for (;;) {
+    bool want = g_recording || (!g_apMode && srStatus().running);
+    if (want && !audioOn) {
+      xSemaphoreTake(g_wireMutex, portMAX_DELAY);
+      codec.start();
+      xSemaphoreGive(g_wireMutex);
+      i2s_start(I2S_NUM_1);
+      audioOn = true;
+    }
+    if (!want && audioOn) {
+      i2s_stop(I2S_NUM_1);
+      xSemaphoreTake(g_wireMutex, portMAX_DELAY);
+      codec.stop();
+      xSemaphoreGive(g_wireMutex);
+      audioOn = false;
+      g_hubFeedingRec = false;
+    }
+    if (!audioOn) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+    size_t read = 0;
+    i2s_read(I2S_NUM_1, stereo, sizeof(stereo), &read, portMAX_DELAY);
+    int frames = (int)(read / 4);
+    if (frames <= 0) continue;
+    if (g_recording) {
+      g_hubFeedingRec = true;
+      recorderFeed(stereo, frames);
+    } else {
+      g_hubFeedingRec = false;
+      // RMS of the mono mix -> loud-burst detection (a sudden loud sound
+      // after relative quiet flashes the celebration face).
+      double acc = 0;
+      for (int i = 0; i < frames; i++) {
+        int32_t m = ((int32_t)stereo[2 * i] + stereo[2 * i + 1]) / 2;
+        acc += (double)m * (double)m;
+      }
+      float rms = sqrtf((float)(acc / frames));
+      slowAvg = slowAvg * 0.92f + rms * 0.08f;
+      uint32_t now = millis();
+      if (rms > LOUD_RMS_THRESHOLD && slowAvg < LOUD_RMS_THRESHOLD * 0.45f &&
+          now - lastBurst > BURST_COOLDOWN_MS) {
+        lastBurst = now;
+        g_burstUntil = now + BURST_HOLD_MS;
+        Serial.printf("LOUD burst rms=%.0f avg=%.0f\n", (double)rms, (double)slowAvg);
+      }
+      srListenFeed(stereo, frames);
+    }
+  }
+}
+
+// ---------------- Recording control ----------------
 static void startRecording() {
   if (!g_streamerConnected) fifoClear();
   int idx = 0;
@@ -490,10 +787,9 @@ static void startRecording() {
     opus_encoder_ctl(g_opus, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
   }
   g_sessionId = esp_random();
+  g_recFill = 0;
   g_writer.begin(g_sessionId);  // Ogg header pages -> file + FIFO
-  codec.start();
-  i2s_start(I2S_NUM_1);
-  g_recording = true;
+  g_recording = true;           // AudioHub starts feeding the recorder
   g_recStartMs = millis();
   screenOn();
   showRecScreen(0);
@@ -502,39 +798,25 @@ static void startRecording() {
 }
 
 static void stopRecording() {
-  i2s_stop(I2S_NUM_1);
-  codec.stop();
+  g_recording = false;  // AudioHub stops feeding, resumes LISTEN feed
+  uint32_t t0 = millis();
+  while (g_hubFeedingRec && millis() - t0 < 1000) delay(5);
   g_writer.finish();  // final page with EOS flag
   g_recFile.flush();
   g_recFile.close();
-  g_recording = false;
   screenOn();
   Serial.printf("REC stop %s\n", g_recName);
   showSplash(kStates[g_state].label);
+  g_displayed = -1;
 }
 
-static void recordLoop() {
-  static int16_t stereo[2048];        // 1024 stereo frames per read
-  static int16_t frame[OPUS_FRAME];   // mono accumulator (20 ms)
-  static int frameFill = 0;
-  size_t read = 0;
-  i2s_read(I2S_NUM_1, stereo, sizeof(stereo), &read, portMAX_DELAY);
-  int frames = (int)(read / 4);
-  for (int i = 0; i < frames; i++) {
-    int32_t m = ((int32_t)stereo[2 * i] + stereo[2 * i + 1]) / 2;
-    frame[frameFill++] = (int16_t)m;
-    if (frameFill == OPUS_FRAME) {
-      uint8_t out[512];
-      int n = opus_encode(g_opus, frame, OPUS_FRAME, out, sizeof(out));
-      if (n > 0) g_writer.writePacket(out, (size_t)n);
-      frameFill = 0;
-    }
-  }
-  static uint32_t lastFlush = 0;
-  if (millis() - lastFlush > 5000) { lastFlush = millis(); g_recFile.flush(); }
-
+// Recording housekeeping on the UI task (audio itself is AudioHub's).
+static void recordUiLoop() {
   uint32_t now = millis();
   uint32_t elapsed = (now - g_recStartMs) / 1000;
+  static uint32_t lastFlush = 0;
+  if (now - lastFlush > 5000) { lastFlush = now; if (g_recFile) g_recFile.flush(); }
+
   if (!g_screenOff && now > g_showUntilMs) screenOff();
   if (!g_screenOff) {
     static uint32_t lastShown = 0xFFFFFFFF;
@@ -547,11 +829,107 @@ static void recordLoop() {
     showRecScreen(elapsed);
     g_showUntilMs = now + 3000;
   }
+  int tx, ty;
+  if (pollTap(tx, ty)) {
+    if (g_screenOff) {  // any touch wakes, like BOOT short press
+      screenOn();
+      showRecScreen(elapsed);
+      g_showUntilMs = now + 3000;
+    } else if (inStopButton(tx, ty)) {
+      stopRecording();
+      return;
+    }
+  }
   if (elapsed >= REC_MAX_SEC) { stopRecording(); return; }
   if (LittleFS.totalBytes() - LittleFS.usedBytes() < REC_MIN_FREE) {
     Serial.println("LittleFS nearly full, stopping recording");
     stopRecording();
+    return;
   }
+  delay(20);
+}
+
+// ---------------- Expression state machine ----------------
+static void consumeCommand() {
+  SrStatus &s = srStatus();
+  int id = s.pendingCommand;
+  if (!id) return;
+  s.pendingCommand = 0;
+  static const int kCmdFace[7] = {-1, FACE_WORKING, FACE_MAKING, FACE_CONNECTING,
+                                  FACE_CELEB, FACE_WAITING, FACE_IDLE};
+  if (id < 1 || id > 6) return;
+  g_cmdFace = kCmdFace[id];
+  g_cmdUntil = millis() + COMMAND_HOLD_MS;
+  if (id == 6) g_state = FACE_IDLE;  // "休息一下" also resets the base
+  Serial.printf("face <- command %d (state %d)\n", id, g_cmdFace);
+}
+
+static int desiredFace() {
+  uint32_t now = millis();
+  if (g_cmdFace >= 0 && (int32_t)(g_cmdUntil - now) > 0) return g_cmdFace;
+  if ((int32_t)(g_burstUntil - now) > 0) return FACE_CELEB;
+  SrStatus &s = srStatus();
+  if (s.running && s.lastSpeechMs != 0 &&
+      (s.speech || now - s.lastSpeechMs < SPEECH_HOLD_MS))
+    return FACE_WAITING;
+  return g_state;
+}
+
+// ---------------- Touch page handling ----------------
+static void handlePageTap(int tx, int ty) {
+  if (g_ui == UI_MENU) {
+    if (inBtn(kMenuBtns[0], tx, ty)) { exitToAnim(); startRecording(); return; }
+    if (inBtn(kMenuBtns[1], tx, ty)) { enterPage(UI_FACES); return; }
+    if (inBtn(kMenuBtns[2], tx, ty)) { enterPage(UI_INFO); return; }
+    if (inBtn(kMenuBtns[3], tx, ty)) { exitToAnim(); return; }
+  } else if (g_ui == UI_FACES) {
+    for (int i = 0; i < kNumStates; i++) {
+      if (inBtn(faceBtn(i), tx, ty)) {
+        g_state = i;
+        g_cmdUntil = 0;  // manual choice wins over a command hold
+        exitToAnim();
+        return;
+      }
+    }
+    if (inBtn(faceBtn(6), tx, ty)) { enterPage(UI_MENU); return; }
+  } else if (g_ui == UI_INFO) {
+    if (inBtn(kInfoBriMinus, tx, ty)) {
+      g_brightness = g_brightness > 70 ? g_brightness - 40 : 30;
+      gfx->setBrightness(g_brightness);
+    } else if (inBtn(kInfoBriPlus, tx, ty)) {
+      g_brightness = g_brightness < 215 ? g_brightness + 40 : 255;
+      gfx->setBrightness(g_brightness);
+    } else if (inBtn(kInfoBack, tx, ty)) {
+      enterPage(UI_MENU);
+      return;
+    } else if (inBtn(kInfoReprov, tx, ty)) {
+      // Re-provision: wipe credentials and reboot into the setup AP.
+      g_prefs.remove("ssid");
+      g_prefs.remove("pass");
+      gfx->fillScreen(RGB565_BLACK);
+      drawCnText(233 - cnTextWidth("重新配网") / 2, 219, "重新配网", RGB565_WHITE);
+      delay(800);
+      ESP.restart();
+    }
+  }
+}
+
+static void uiPageLoop() {
+  uint32_t now = millis();
+  if (now - g_uiLastActMs > UI_TIMEOUT_MS) { exitToAnim(); return; }
+  int tx, ty;
+  if (pollTap(tx, ty)) {
+    g_uiLastActMs = now;
+    handlePageTap(tx, ty);
+    if (g_ui != UI_ANIM && !g_recording) drawCurrentPage();
+    return;
+  }
+  if (pollButton() == 2) { exitToAnim(); startRecording(); return; }
+  if (g_ui == UI_INFO && now - g_infoRedrawMs >= 1000) {
+    g_infoRedrawMs = now;
+    drawInfoPage();
+  }
+  delay(25);
 }
 
 // ---------------- JPEG draw callback ----------------
@@ -611,16 +989,20 @@ static bool loadClip(const char *path) {
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("Muse badge v1.1");
+  Serial.println("Muse badge v1.2");
   Wire.begin(IIC_SDA, IIC_SCL);
   pinMode(PIN_BOOT, INPUT_PULLUP);
   g_fifoMutex = xSemaphoreCreateMutex();
+  g_wireMutex = xSemaphoreCreateMutex();
 
   g_pmuOk = pmu.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
   Serial.printf("PMU %s\n", g_pmuOk ? "ok" : "not found");
 
+  g_touchOk = touch.begin(Wire, TP_RST, TP_INT);
+  Serial.printf("Touch CST9217 %s\n", g_touchOk ? "ok" : "not responding");
+
   if (!gfx->begin()) Serial.println("gfx begin failed");
-  gfx->setBrightness(200);
+  gfx->setBrightness(g_brightness);
   gfx->fillScreen(RGB565_BLACK);
 
   if (!LittleFS.begin(false, "/littlefs", 10, "storage")) {
@@ -657,26 +1039,27 @@ void setup() {
   i2s_set_pin(I2S_NUM_1, &pins);
   i2s_stop(I2S_NUM_1);
 
+  // Listen engine: load models once; start unless provisioning Wi-Fi.
+  if (srListenInit() && !g_apMode) srListenStart();
+  xTaskCreatePinnedToCore(audioHubTask, "audiohub", 8192, nullptr, 4, nullptr, 0);
+
   jpeg.setPixelType(RGB565_BIG_ENDIAN);
   if (g_apMode) {
     showSetupScreen();
   } else {
-    loadClip(kStates[g_state].file);
+    if (loadClip(kStates[g_state].file)) g_displayed = g_state;
     showSplash(kStates[g_state].label);
   }
 }
 
-// ---------------- Loop ----------------
-void loop() {
-  if (g_recording) { recordLoop(); return; }
-
-  if (g_apMode) {
-    if (g_server) g_server->handleClient();
-    if (pollButton() == 2) startRecording();
-    delay(5);
-    return;
+// ---------------- Animation loop (UI_ANIM) ----------------
+static void animLoop() {
+  consumeCommand();
+  int want = desiredFace();
+  if (want != g_displayed) {
+    if (loadClip(kStates[want].file)) g_displayed = want;
+    else { delay(200); return; }
   }
-
   if (g_frameCount == 0) { delay(200); return; }
   const uint32_t frameMs = 83;  // 12 fps
   for (int i = 0; i < g_frameCount; i++) {
@@ -688,14 +1071,34 @@ void loop() {
     int act = pollButton();
     if (act == 1) {
       g_state = (g_state + 1) % kNumStates;
-      loadClip(kStates[g_state].file);
+      g_cmdUntil = 0;  // manual switch wins over a command hold
+      if (loadClip(kStates[g_state].file)) g_displayed = g_state;
       showSplash(kStates[g_state].label);
       return;
     } else if (act == 2) {
       startRecording();
       return;
     }
+    int tx, ty;
+    if (pollTap(tx, ty)) { enterPage(UI_MENU); return; }
+    consumeCommand();
+    if (desiredFace() != g_displayed) return;  // reload on next pass
     uint32_t dt = millis() - t0;
     if (dt < frameMs) delay(frameMs - dt);
   }
+}
+
+// ---------------- Loop ----------------
+void loop() {
+  if (g_recording) { recordUiLoop(); return; }
+
+  if (g_apMode) {
+    if (g_server) g_server->handleClient();
+    if (pollButton() == 2) startRecording();
+    delay(5);
+    return;
+  }
+
+  if (g_ui != UI_ANIM) { uiPageLoop(); return; }
+  animLoop();
 }
