@@ -614,21 +614,34 @@ static bool inStopButton(int x, int y) {
   return dx * dx + dy * dy <= (STOP_R + 8) * (STOP_R + 8);
 }
 
-static void showRecScreen(uint32_t elapsedSec) {
+// Static layer of the REC screen, drawn once per wake. The white ring
+// around the stop button is two stacked fillCircles: drawCircle() is
+// per-pixel and drops pixels on this panel (v1.2.3 lesson), and a full
+// repaint every second made the circle tear and flicker.
+static void drawRecStatic() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(233, 108, 32, RGB565_RED);
-  gfx->setTextColor(RGB565_WHITE);
-  gfx->setTextSize(5);
-  gfx->setCursor(150, 168);
-  gfx->printf("%lus", (unsigned long)elapsedSec);
+  gfx->fillCircle(STOP_CX, STOP_CY, STOP_R + 2, RGB565_WHITE);
   gfx->fillCircle(STOP_CX, STOP_CY, STOP_R, gfx->color565(140, 32, 32));
-  gfx->drawCircle(STOP_CX, STOP_CY, STOP_R, RGB565_WHITE);
-  gfx->drawCircle(STOP_CX, STOP_CY, STOP_R - 1, RGB565_WHITE);
   drawCnText(STOP_CX - cnTextWidth("停止") / 2, STOP_CY - 14, "停止", RGB565_WHITE, gfx->color565(140, 32, 32));
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(110, 424);
   gfx->print(WiFi.status() == WL_CONNECTED && g_streamerConnected ? "streaming" : "local only");
+}
+
+// Per-second update: repaint only the elapsed digits strip.
+static void drawRecElapsed(uint32_t elapsedSec) {
+  gfx->fillRect(145, 163, 176, 50, RGB565_BLACK);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setTextSize(5);
+  gfx->setCursor(150, 168);
+  gfx->printf("%lus", (unsigned long)elapsedSec);
+}
+
+static void showRecScreen(uint32_t elapsedSec) {
+  drawRecStatic();
+  drawRecElapsed(elapsedSec);
 }
 
 // ---------------- Touch pages ----------------
@@ -670,7 +683,7 @@ static void drawMenuPage() {
   gfx->setTextColor(gfx->color565(90, 100, 120));
   gfx->setTextSize(2);
   gfx->setCursor(197, 432);
-  gfx->print("v1.2.4");
+  gfx->print("v1.2.5");
 }
 
 static void drawFacesPage() {
@@ -715,6 +728,30 @@ static void drawInfoPage() {
   drawButton(kInfoBack);
   drawButton(kInfoReprov);
   drawButton(kInfoCalib);
+}
+
+// Refresh only the value lines whose text changed, repainting just
+// their 28 px strip. (A full-page repaint every second flickered.)
+static void updateInfoValues() {
+  static char last[3][96] = {{0}, {0}, {0}};
+  char bufs[3][96];
+  const int ys[3] = {34, 84, 134};
+  int b = batteryPct();
+  if (b >= 0) snprintf(bufs[0], 96, "电量 %d%%", b);
+  else snprintf(bufs[0], 96, "电量 未知");
+  size_t total = LittleFS.totalBytes(), used = LittleFS.usedBytes();
+  int freePct = total ? (int)((total - used) * 100 / total) : 0;
+  snprintf(bufs[1], 96, "存储剩余 %d%%", freePct);
+  double recHours = total > used ? (double)(total - used) / (OPUS_BITRATE / 8) / 3600.0 : 0;
+  snprintf(bufs[2], 96, "可录时长 %.1f小时", recHours);
+  uint16_t bg = gfx->color565(10, 12, 18);
+  for (int i = 0; i < 3; i++) {
+    if (strcmp(last[i], bufs[i]) != 0) {
+      strcpy(last[i], bufs[i]);
+      gfx->fillRect(43, ys[i], 423, 28, bg);
+      drawCnText(43, ys[i], bufs[i], RGB565_WHITE, bg);
+    }
+  }
 }
 
 static void drawCurrentPage() {
@@ -808,9 +845,8 @@ static void drawCalibPage() {
                     i < g_calStep ? gfx->color565(64, 200, 120)
                                   : gfx->color565(70, 80, 100));
   int cx = kCalTgt[g_calStep][0], cy = kCalTgt[g_calStep][1];
-  gfx->fillCircle(cx, cy, 17, gfx->color565(200, 60, 60));
-  gfx->drawCircle(cx, cy, 22, RGB565_WHITE);
-  gfx->drawCircle(cx, cy, 23, RGB565_WHITE);
+  gfx->fillCircle(cx, cy, 23, RGB565_WHITE);
+  gfx->fillCircle(cx, cy, 19, gfx->color565(200, 60, 60));
 }
 
 static bool fitCalLine(const float *u, const float *t, float &a, float &b,
@@ -1033,7 +1069,7 @@ static void recordUiLoop() {
   if (!g_screenOff && now > g_showUntilMs) screenOff();
   if (!g_screenOff) {
     static uint32_t lastShown = 0xFFFFFFFF;
-    if (elapsed != lastShown) { lastShown = elapsed; showRecScreen(elapsed); }
+    if (elapsed != lastShown) { lastShown = elapsed; drawRecElapsed(elapsed); }
   }
   int act = pollButton();
   if (act == 2) { stopRecording(); return; }
@@ -1160,9 +1196,9 @@ static void uiPageLoop() {
     return;
   }
   if (pollButton() == 2) { exitToAnim(); startRecording(); return; }
-  if (g_ui == UI_INFO && now - g_infoRedrawMs >= 1000) {
+  if (g_ui == UI_INFO && now - g_infoRedrawMs >= 5000) {
     g_infoRedrawMs = now;
-    drawInfoPage();
+    updateInfoValues();
   }
   delay(25);
 }
